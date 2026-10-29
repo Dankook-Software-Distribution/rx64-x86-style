@@ -40,9 +40,11 @@ ioapic_write(uint32 reg, uint32 data)
 void
 ioapicinit(void)
 {
-  uint32 crst = (ioapic_read(IO_APIC_VER) >> 16) & 0xff;
+  // Bits 16-23 of VER hold the index of the last redirection
+  // entry (entries - 1), so the loop includes it.
+  uint32 maxredir = (ioapic_read(IO_APIC_VER) >> 16) & 0xff;
 
-  for (int i = 0; i <= crst; ++i) {
+  for (int i = 0; i <= maxredir; ++i) {
     ioapic_write(IO_APIC_REDTBL + 2 * i, IO_APIC_REDIR_MASKED | (T_IRQ0 + i));
     ioapic_write(IO_APIC_REDTBL + 2 * i + 1, 0);
   }
