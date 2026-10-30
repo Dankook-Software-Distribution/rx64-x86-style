@@ -7,7 +7,14 @@
 #include "defs.h"
 #include "traps.h"
 
+struct spinlock tickslock;
 uint ticks;
+
+void
+trapinit(void)
+{
+  initlock(&tickslock, "time");
+}
 
 // x86_64: the local APIC timer interrupt (riscv: clockintr()).
 // Count a tick and then send an EOI to the local APIC; without
@@ -18,8 +25,12 @@ uint ticks;
 static void
 timerintr(void)
 {
-  ++ticks;
-  if (ticks % 100 == 0) printk("%u\n", ticks);
+  if (cpuid() == 0) {
+    acquire(&tickslock);
+    ticks++;
+    wakeup(&ticks);
+    release(&tickslock);
+  }
   lapiceoi();
 }
 
@@ -76,4 +87,10 @@ trap(struct trapframe *tf)
     show_regs(tf);
     for (;;) ;
   }
+  // give up the CPU if this is a timer interrupt.
+  // x86_64: kernel and user traps share this one entry, so
+  // myproc() == 0 means the interrupt came in scheduler()'s
+  // safe_halt(), where there is nothing to yield.
+  if (myproc() != 0 && tf->trapno == T_IRQ0 + IRQ_TIMER)
+    yield();
 }

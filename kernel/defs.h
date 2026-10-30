@@ -95,7 +95,7 @@ void            setkilled(struct proc*);
 struct cpu*     mycpu(void);
 struct proc*    myproc();
 void            procinit(void);
-void            allocproc_test(void); // TEST(5-c-1)
+void            kthread_test(void); // TEST(5)
 void            scheduler(void) __attribute__((noreturn));
 void            sched(void);
 void            sleep_prepare(void*);

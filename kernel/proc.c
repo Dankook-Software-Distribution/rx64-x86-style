@@ -6,23 +6,14 @@
 #include "proc.h"
 #include "defs.h"
 
-// A fork child's very first scheduling by scheduler()
-// will swtch to forkret.
-// x86_64: only a stub for now, so that allocproc() can point
-// new contexts at it. 5-c-3 fills it in: release the p->lock
-// that scheduler() took, then start running the process.
-void
-forkret(void)
-{
-  panic("forkret");
-}
-
 struct cpu cpus[NCPU];
 
 struct proc proc[NPROC];
 
 int nextpid = 1;
 struct spinlock pid_lock;
+
+extern void forkret(void);
 
 // helps ensure that wakeups of wait()ing
 // parents are not lost. helps obey the
@@ -96,6 +87,16 @@ mycpu(void)
   return c;
 }
 
+struct proc *
+myproc(void)
+{
+  push_off();
+  struct cpu *c = mycpu();
+  struct proc *p = c->proc;
+  pop_off();
+  return p;
+}
+
 int
 allocpid()
 {
@@ -165,21 +166,212 @@ allocproc(void)
   return p;
 }
 
-// TEST(5-c-1): allocate two procs and print what allocproc()
-// set up. Expect pid 1 and 2, kstack KSTACK(0) and KSTACK(1),
-// the trapframe 176 bytes below each stack top, rip at forkret,
-// and rsp 8 bytes below the trapframe. Remove with 5-c-3.
-void
-allocproc_test(void)
+// TEST(5): two kernel threads that the timer preempts.
+// forkret() returns into the function stored in the slot below
+// the trapframe. scheduler() hands them interrupts off, so they
+// turn them on. They must never return. Expect a and b mixed
+// on the serial port.
+static void
+test_thread(char c)
 {
+  intr_on();
+  for (;;) {
+    for (volatile int i = 0; i < 10000000; i++)
+      ;
+    printk("%c", c);
+  }
+}
+
+static void
+test_a(void)
+{
+  test_thread('a');
+}
+
+static void
+test_b(void)
+{
+  test_thread('b');
+}
+
+void
+kthread_test(void)
+{
+  void (*fn[])(void) = { test_a, test_b };
   struct proc *p;
 
   for (int i = 0; i < 2; i++) {
     if ((p = allocproc()) == 0)
-      panic("allocproc_test");
-    printk("pid %d kstack %p trapframe %p rip %p rsp %p\n",
-           p->pid, (void *)p->kstack, p->trapframe,
-           (void *)p->context.rip, (void *)p->context.rsp);
+      panic("kthread_test");
+    *(uint64 *)p->context.rsp = (uint64)fn[i];
+    p->state = RUNNABLE;
+    release(&p->lock);
+  }
+}
+
+// Per-CPU process scheduler.
+// Each CPU calls scheduler() after setting itself up.
+// Scheduler never returns.  It loops, doing:
+//  - choose a process to run.
+//  - swtch to start running that process.
+//  - eventually that process transfers control
+//    via swtch back to the scheduler.
+void
+scheduler(void)
+{
+  struct proc *p;
+  struct cpu *c = mycpu();
+
+  c->proc = 0;
+  for (;;) {
+    // Turn interrupts off to avoid a possible race between an
+    // interrupt and hlt.
+    // x86_64: riscv first does intr_on() so that pending
+    // interrupts get taken, but sti holds them off until after
+    // the next instruction, so sti; cli would take none. As in
+    // Linux's do_idle(), interrupts are taken by safe_halt()
+    // below and by processes, which run with interrupts on.
+    intr_off();
+
+    int found = 0;
+    for (p = proc; p < &proc[NPROC]; p++) {
+      acquire(&p->lock);
+      if (p->state == RUNNABLE) {
+        // Switch to chosen process.  It is the process's job
+        // to release its lock and then reacquire it
+        // before jumping back to us.
+        p->state = RUNNING;
+        c->proc = p;
+        // x86_64: on a trap from CPL 3 the CPU loads rsp from
+        // the TSS's sp0 before pushing the trapframe, so point
+        // it at the top of p's kernel stack, where allocproc()
+        // placed p->trapframe. riscv has no such register:
+        // trampoline.S read the stack from the trapframe page.
+        // Linux does the same in __switch_to()
+        // (update_task_stack()).
+        c->tss.sp0 = p->kstack + PGSIZE;
+        swtch(&c->context, &p->context);
+
+        // Don't re-enable interrupts on release.
+        mycpu()->intena = 0;
+
+        // Process is done running for now.
+        // It should have changed its p->state before coming back.
+        c->proc = 0;
+        found = 1;
+      }
+      release(&p->lock);
+    }
+    if (found == 0) {
+      // nothing to run; stop running on this core until an interrupt.
+      // x86_64: riscv's wfi wakes on a pending interrupt even
+      // with interrupts off, but hlt with IF=0 never wakes, so
+      // safe_halt() enables interrupts and halts in one step.
+      safe_halt();
+    }
+  }
+}
+
+// Switch to scheduler.  Must hold only p->lock
+// and have changed proc->state. Saves and restores
+// intena because intena is a property of this
+// kernel thread, not this CPU. It should
+// be proc->intena and proc->noff, but that would
+// break in the few places where a lock is held but
+// there's no process.
+void
+sched(void)
+{
+  int intena;
+  struct proc *p = myproc();
+
+  if (!holding(&p->lock))
+    panic("sched p->lock");
+  if (mycpu()->noff != 1)
+    panic("sched locks");
+  if (p->state == RUNNING)
+    panic("sched RUNNING");
+  if (intr_get())
+    panic("sched interruptible");
+
+  intena = mycpu()->intena;
+  swtch(&p->context, &mycpu()->context);
+  mycpu()->intena = intena;
+}
+
+// Give up the CPU for one scheduling round.
+void
+yield(void)
+{
+  struct proc *p = myproc();
+  acquire(&p->lock);
+  p->state = RUNNABLE;
+  sched();
+  release(&p->lock);
+}
+
+// A fork child's very first scheduling by scheduler()
+// will swtch to forkret.
+// x86_64: riscv jumps to userret in the trampoline here. Ours
+// just returns, into the slot allocproc() left below the
+// trapframe (trapret in step 7).
+void
+forkret(void)
+{
+  struct proc *p = myproc();
+
+  // Still holding p->lock from scheduler.
+  release(&p->lock);
+}
+
+// Register current process as waiting for wakeups on chan.
+void
+sleep_prepare(void *chan)
+{
+  struct proc *p = myproc();
+
+  acquire(&p->lock);
+  if (chan == 0)
+    panic("sleep_prepare: zero chan");
+  p->chan = chan;
+  release(&p->lock);
+}
+
+// Put the thread to sleep.  Assumes sleep_prepare() was called before.
+// If the channel registered by sleep_prepare() has been woken up in
+// the meantime, do not go to sleep, and instead return immediately.
+void
+sleep(void)
+{
+  struct proc *p = myproc();
+
+  acquire(&p->lock);
+  if (p->chan != 0) {
+    p->state = SLEEPING;
+    sched();
+  }
+  release(&p->lock);
+}
+
+// Wake up all processes sleeping on channel chan.
+void
+wakeup(void *chan)
+{
+  struct proc *p;
+
+  for (p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if (p->chan == chan) {
+      // If the process is waiting for wakeups on this channel,
+      // signal that the wakeup happened by clearing p->chan.
+      p->chan = 0;
+
+      // If this waiting process has gotten so far as to actually
+      // go to sleep, also set it back to RUNNING.
+      if (p->state == SLEEPING) {
+        p->state = RUNNABLE;
+      }
+    }
     release(&p->lock);
   }
 }

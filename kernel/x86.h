@@ -180,6 +180,18 @@ _Static_assert(sizeof(struct x86_hw_tss) == 104,
 _Static_assert(__builtin_offsetof(struct x86_hw_tss, sp0) == 4,
                "the CPU reads sp0 at offset 4");
 
+// enable interrupts and wait for one
+// x86_64: riscv's wfi wakes on a pending interrupt even with
+// sstatus.SIE clear, but hlt with IF=0 never wakes. sti delays
+// interrupts until the next instruction ends, so sti; hlt
+// cannot lose an interrupt in between. Keep both in one asm so
+// the compiler cannot put anything there. Linux: native_safe_halt().
+static inline void
+safe_halt()
+{
+  asm volatile("sti; hlt" : : : "memory");
+}
+
 #endif // __ASSEMBLER__
 
 #define PGSIZE  4096 // bytes per page
