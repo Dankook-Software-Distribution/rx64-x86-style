@@ -92,3 +92,18 @@ kalloc(void)
     memset((char *)r, 5, PGSIZE); // fill with junk
   return (void *)r;
 }
+
+// TEST(6): count the free pages, so that uvm_test() can check
+// that uvmfree() gives back every page it took.
+int
+kfreecount(void)
+{
+  struct run *r;
+  int n = 0;
+
+  acquire(&kmem.lock);
+  for (r = kmem.freelist; r; r = r->next)
+    n++;
+  release(&kmem.lock);
+  return n;
+}

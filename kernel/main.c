@@ -23,6 +23,7 @@ main()
   picinit();       // mask the legacy 8259 PICs
   lapicinit();     // local APIC and its timer
   ioapicinit();    // I/O APIC, every pin masked
+  uvm_test();      // TEST(6): user page tables
   kthread_test();  // TEST(5): two kernel threads
   scheduler();
 }

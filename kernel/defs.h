@@ -63,6 +63,7 @@ void            seginit(void);
 void*           kalloc(void);
 void            kfree(void *);
 void            kinit(void);
+int             kfreecount(void); // TEST(6)
 
 // log.c
 void            initlog(int, struct superblock*);
@@ -161,7 +162,7 @@ void            kvminithart(void);
 void            kvmmap(pagetable_t, uint64, uint64, uint64, uint64);
 int             mappages(pagetable_t, uint64, uint64, uint64, uint64);
 pagetable_t     uvmcreate(void);
-uint64          uvmalloc(pagetable_t, uint64, uint64, int);
+uint64          uvmalloc(pagetable_t, uint64, uint64, uint64);
 uint64          uvmdealloc(pagetable_t, uint64, uint64);
 int             uvmcopy(pagetable_t, pagetable_t, uint64);
 void            uvmfree(pagetable_t, uint64);
@@ -174,6 +175,7 @@ int             copyin(pagetable_t, uint64, char *, uint64, uint64);
 int             copyinstr(pagetable_t, uint64, char *, uint64, uint64);
 int             ismapped(pagetable_t, uint64);
 uint64          vmfault(pagetable_t, uint64, uint64, int);
+void            uvm_test(void); // TEST(6)
 
 // plic.c
 void            plicinit(void);

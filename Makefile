@@ -162,11 +162,12 @@ endif
 
 # x86_64: pc machine, Multiboot load via -kernel, COM1 on stdio.
 # The IDE disk (fs.img) is added once ide.c is ported.
-# -d int,cpu_reset and -no-reboot keep a triple fault on screen
-# instead of silently rebooting.
+# -d int,cpu_reset and -no-reboot keep a triple fault visible
+# instead of silently rebooting. The log goes to qemu.log, not the
+# screen, because it dumps the registers on every timer interrupt.
 QEMUOPTS = -machine pc -kernel $K/kernel -m 128M -smp $(CPUS) -nographic
 QEMUOPTS += -serial mon:stdio
-QEMUOPTS += -d int,cpu_reset -no-reboot -no-shutdown
+QEMUOPTS += -d int,cpu_reset -D qemu.log -no-reboot -no-shutdown
 
 qemu: check-qemu-version $K/kernel
 	$(QEMU) $(QEMUOPTS)
