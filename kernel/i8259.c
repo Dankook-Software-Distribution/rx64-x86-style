@@ -1,10 +1,7 @@
 // x86_64: the legacy 8259A interrupt controllers (riscv has
-// none). A PC still has two of them, master and slave, for IRQs
-// 0-15, and the BIOS hands them over set up for DOS: IRQ 0-7 go
-// to vectors 8-15, on top of CPU exceptions such as #DF and #GP.
-// The kernel takes interrupts through the LAPIC and IOAPIC
-// instead, so the only job here is to mask every 8259 IRQ,
-// as Linux's mask_8259A() does.
+// none). The BIOS leaves IRQ 0-7 on vectors 8-15, on top of CPU
+// exceptions, and the kernel uses the APICs instead, so the only
+// job here is to mask them all.
 
 #include "types.h"
 #include "x86.h"

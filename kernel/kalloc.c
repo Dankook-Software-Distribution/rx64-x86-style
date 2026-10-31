@@ -2,11 +2,9 @@
 // kernel stacks, page-table pages,
 // and pipe buffers. Allocates whole 4096-byte pages.
 //
-// x86_64: pages are handed out and taken back as kernel virtual
-// addresses in the KERNBASE window (riscv: RAM was identity-
-// mapped, so a page's physical and virtual addresses were the
-// same). Despite the name, the pa arguments below are such
-// addresses; callers use V2P() to put a page in a PTE or CR3.
+// x86_64: pages are kernel virtual addresses in the KERNBASE
+// window (riscv: identity map). Despite the name, pa below is
+// one; callers V2P() it for a PTE or cr3.
 
 #include "types.h"
 #include "param.h"
@@ -29,10 +27,8 @@ struct {
   struct run *freelist;
 } kmem;
 
-// x86_64: PHYSTOP is a physical address now, so convert it to
-// match end, which kernel.ld places at a high address. entry.S's
-// boot page table maps the first 1GB at KERNBASE, which covers
-// this range, so kalloc works before kvminit() runs.
+// x86_64: PHYSTOP is physical now, so P2V() it to match end.
+// The boot page table already maps this range.
 void
 kinit()
 {
@@ -91,19 +87,4 @@ kalloc(void)
   if (r)
     memset((char *)r, 5, PGSIZE); // fill with junk
   return (void *)r;
-}
-
-// TEST(6): count the free pages, so that uvm_test() can check
-// that uvmfree() gives back every page it took.
-int
-kfreecount(void)
-{
-  struct run *r;
-  int n = 0;
-
-  acquire(&kmem.lock);
-  for (r = kmem.freelist; r; r = r->next)
-    n++;
-  release(&kmem.lock);
-  return n;
 }

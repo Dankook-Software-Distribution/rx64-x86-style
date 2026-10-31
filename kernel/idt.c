@@ -1,15 +1,13 @@
 // x86_64: the interrupt descriptor table (riscv: stvec held one
-// handler address for every trap). The IDT has one gate per
-// vector, 256 in all, and each gate points at that vector's stub
-// in vectors.S. All stubs then go through alltraps to trap().
+// handler for every trap). Each of the 256 gates points at its
+// stub in vectors.S, which goes through alltraps to trap().
 
 #include "types.h"
 #include "x86.h"
 #include "traps.h"
 
-// a 64-bit IDT gate, 16 bytes (SDM Vol. 3A Figure 7-8). The
-// handler address is split into three pieces around the other
-// fields. Field names follow Linux's struct gate_struct.
+// a 64-bit IDT gate, 16 bytes. The handler address is split into
+// three pieces around the other fields.
 struct gate_struct {
   uint16 offset_low;    // handler address bits 0..15
   uint16 segment;       // code segment selector for the handler
@@ -28,11 +26,8 @@ static struct gate_struct idt[256];
 extern uint64 vectors[];
 
 // fill in every gate and load the IDT.
-// attr 0x8E is P = 1, DPL 0 and type 0xE, a 64-bit interrupt
-// gate, which clears IF on entry; a trap gate (0xF) would leave
-// interrupts on. Linux also uses interrupt gates for nearly all
-// vectors. Only T_SYSCALL has DPL 3, so that user code can
-// reach it with int; trap() turns interrupts back on for it.
+// attr 0x8E is P = 1, DPL 0, 64-bit interrupt gate (clears IF).
+// Only T_SYSCALL has DPL 3, so that user code can use int.
 void
 idtinit(void)
 {

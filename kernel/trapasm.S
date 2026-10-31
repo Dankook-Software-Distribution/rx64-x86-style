@@ -1,17 +1,13 @@
-        # x86_64: common trap entry and exit (riscv: kernelvec for
-        # traps from the kernel, uservec/userret in trampoline.S for
-        # traps from user space). Every vector stub in vectors.S
-        # jumps to alltraps, from the kernel or from user space
-        # alike, with the stack already holding the top of a
-        # struct trapframe:
+        # x86_64: common trap entry and exit (riscv: kernelvec, and
+        # uservec/userret in trampoline.S). Every stub in vectors.S
+        # jumps to alltraps with the top of a trapframe pushed:
         #
         #   ss, rsp, rflags, cs, rip    pushed by the CPU
         #   err                         by the CPU, or a fake 0 by the stub
         #   trapno                      by the stub   <- rsp
         #
-        # alltraps pushes the general registers below that to
-        # complete the trapframe and calls trap(tf); trapret undoes
-        # it and returns with iretq.
+        # alltraps pushes the rest and calls trap(tf); trapret
+        # undoes it with iretq.
 
         .text
 .globl alltraps
@@ -35,11 +31,8 @@ alltraps:
         pushq %rbx
         pushq %rax
 
-        # rsp now points at the complete trapframe; pass it as the
-        # first argument. In 64-bit mode the CPU aligns rsp to 16
-        # bytes before pushing its frame, and the 176-byte trapframe
-        # is a multiple of 16, so rsp is aligned for the call as the
-        # SysV ABI requires.
+        # pass the trapframe. rsp is 16-byte aligned: the CPU
+        # aligns it, and 176 is a multiple of 16.
         movq %rsp, %rdi
         call trap
 
@@ -66,6 +59,5 @@ trapret:
         # drop trapno and err, leaving rsp at the CPU's frame.
         addq $16, %rsp
 
-        # pop rip, cs, rflags, rsp and ss. iretq, not iret: iret
-        # would pop 4-byte values.
+        # pop rip, cs, rflags, rsp and ss (iretq: 8-byte values).
         iretq

@@ -1,7 +1,6 @@
 // Saved registers for kernel context switches.
-// x86_64: riscv saved ra and sp; here rip is the return address
-// that call pushed on the stack, so swtch pops it into rip and
-// saves rsp as it is after the pop. swtch.S uses these offsets.
+// x86_64: rip and rsp (riscv: ra and sp); swtch pops the return
+// address into rip. swtch.S uses these offsets.
 struct context {
   /*  0 */ uint64 rip;
   /*  8 */ uint64 rsp;
@@ -24,10 +23,8 @@ struct cpu {
   int noff;               // Depth of push_off() nesting.
   int intena;             // Were interrupts enabled before push_off()?
 
-  // x86_64: riscv has no segmentation. Each CPU needs its own
-  // TSS (sp0 is that CPU's current kernel stack) and so its own
-  // TSS descriptor; ltr marks the descriptor busy, so CPUs
-  // cannot share one, and the GDT that holds it is per CPU too.
+  // x86_64: each CPU needs its own TSS, and so its own GDT for
+  // the busy TSS descriptor (riscv: no segmentation).
   uint64 gdt[NSEGS];      // This CPU's GDT, from seginit().
   struct x86_hw_tss tss;  // This CPU's TSS; sp0 is set on each switch.
 };
@@ -40,14 +37,9 @@ extern struct cpu cpus[NCPU];
 // zero err otherwise), and alltraps in trapasm.S pushes r15..rax.
 // trapret pops it in reverse and finishes with iretq.
 //
-// x86_64: riscv kept the trapframe in its own page mapped just
-// under the trampoline in the user page table, with kernel_satp,
-// kernel_sp, kernel_trap and kernel_hartid for uservec to load.
-// none of that is needed here: the CPU takes the kernel stack
-// from TSS.rsp0 and the handler from the IDT, and cr3 stays the
-// same because every user page table also maps the kernel.
-// layout follows SDM Vol. 3A Figure 7-9 for rip..ss; trapasm.S
-// uses these offsets as numbers, so keep the two in sync.
+// x86_64: riscv kept it in its own page under the trampoline,
+// with kernel_satp and friends; here the CPU finds the stack in
+// TSS sp0. trapasm.S uses these offsets as numbers.
 struct trapframe {
   // pushed by alltraps
   /*   0 */ uint64 rax;

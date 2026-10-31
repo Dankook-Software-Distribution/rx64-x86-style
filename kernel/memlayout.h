@@ -22,17 +22,14 @@
 
 #define EXTMEM    0x100000   // kernel load address
 // x86_64: a physical address now (riscv: KERNBASE + 128MB).
-// RAM on pc starts at 0. Must stay below 2GB, the size of the
-// KERNBASE window.
+// Must stay below 2GB, the size of the KERNBASE window.
 #define PHYSTOP   0x8000000  // 128MB
 
 // x86_64: IOAPIC and LAPIC replace PLIC and CLINT.
 #define IOAPIC_PA 0xFEC00000
 #define LAPIC_PA  0xFEE00000
 
-// x86_64: COM1 and IDE are I/O ports reached with inb/outb, not
-// MMIO, so they need no mapping (riscv: UART0, VIRTIO0).
-// IRQ numbers live in traps.h.
+// x86_64: I/O ports, not MMIO (riscv: UART0, VIRTIO0).
 #define COM1      0x3F8
 #define IDE_BASE  0x1F0
 
@@ -59,10 +56,7 @@
 #define P2V_WO(x) ((x) + KERNBASE)
 
 // x86_64: device MMIO is above 2GB physical, out of reach of
-// P2V, so it gets its own window at DEVBASE + pa. Nothing is
-// mapped at DEVBASE itself; the LAPIC ends up at
-// 0xFFFFFFFFFEE00000. This range overlaps the top of the KERNBASE
-// window, which is unused because PHYSTOP is far below 2GB.
+// P2V, so it gets its own window at DEVBASE + pa.
 #define DEVBASE   0xFFFFFFFF00000000
 #define DEV2V(pa) (DEVBASE + (pa))
 
@@ -78,9 +72,7 @@
 // ---------------------------------------------------------------
 
 // x86_64: kernel stacks start just above the RAM mapping
-// (riscv: beneath TRAMPOLINE). Each stack has an invalid guard
-// page below it. NPROC=64 stacks end at 0xFFFFFFFF88080000,
-// far below the device window.
+// (riscv: beneath TRAMPOLINE), each with a guard page below.
 #define KSTACKBASE P2V_WO(PHYSTOP)
 #define KSTACK(p)  (KSTACKBASE + ((p) * 2 + 1) * PGSIZE)
 
@@ -99,7 +91,6 @@
 // the trapframe sits at the top of the kernel stack.
 // ---------------------------------------------------------------
 
-// x86_64: replaces TRAPFRAME as the user upper bound. The last
-// page below MAXVA stays unmapped so a later syscall/sysret path
-// can never return to a non-canonical address.
+// x86_64: replaces TRAPFRAME as the user upper bound. The page
+// below MAXVA stays unmapped, for a later sysret.
 #define USERTOP (MAXVA - PGSIZE)

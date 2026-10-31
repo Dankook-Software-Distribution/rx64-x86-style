@@ -1,10 +1,7 @@
-// x86_64: early console output, for use before printk and the
-// console driver are up (riscv: none; printk was up from the
-// start). Like Linux's early_printk, it writes straight to the
-// COM1 UART with no lock and no buffer, so it also works from
-// trap handlers and panics. A real 16550 needs a wait for LSR.THRE
-// before each byte; qemu accepts bytes at any time, so it is left
-// out.
+// x86_64: early console output (riscv: none), like Linux's
+// early_printk: straight to COM1 with no lock, so it also works
+// in trap handlers and panics. No wait for LSR.THRE; qemu does
+// not need it.
 
 #include "types.h"
 #include "x86.h"
@@ -30,9 +27,7 @@ earlyputs(char *s)
   }
 }
 
-// print x as 0x followed by 16 hex digits, most significant
-// first, as xv6's printptr() does: take the top 4 bits, then
-// shift the next digit up.
+// print x as 0x and 16 hex digits, as printptr() does.
 void
 earlyputx(uint64 x)
 {

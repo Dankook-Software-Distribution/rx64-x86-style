@@ -1,12 +1,7 @@
 # x86_64: one entry stub per interrupt vector (riscv: a single
-# kernelvec, since scause tells the kernel what happened). The
-# CPU jumps to the stub IDT[n] names but does not say which n it
-# was, so each stub pushes its own number. Some exceptions also
-# make the CPU push an error code; for every other vector the
-# stub pushes a fake 0 first, so alltraps always finds trapno and
-# err just below rip, as in struct trapframe.
-# The stubs are made by the assembler with .macro and .rept, as
-# Linux does, instead of xv6's vectors.pl.
+# kernelvec; scause told what happened). Each stub pushes its
+# vector number, after a fake 0 error code where the CPU pushes
+# none. Made with .rept, as Linux does, not xv6's vectors.pl.
 
 #include "kernel/traps.h"
 
@@ -28,10 +23,8 @@ vector\n:
         .quad vector\n
 .endm
 
-        # vector0 .. vector255. "vector i" would pass the letter i,
-        # making every label "vectori"; in .altmacro mode, %i
-        # passes i's current value instead. i exists only while
-        # assembling.
+        # vector0 .. vector255. In .altmacro mode, %i passes i's
+        # value rather than the letter i.
         .text
         .altmacro
         .set i, 0
@@ -40,10 +33,8 @@ vector\n:
                 .set i, i + 1
         .endr
 
-        # vectors[n] is the address of vectorn, for the IDT setup in
-        # C (extern uint64 vectors[]). The stubs differ in size, so
-        # their addresses cannot be computed. i is still 256 from
-        # the loop above, so start over at 0.
+        # vectors[n] is the address of vectorn, for idtinit().
+        # The stubs differ in size, so they need a table.
         .section .rodata
         .balign 8
 .globl vectors

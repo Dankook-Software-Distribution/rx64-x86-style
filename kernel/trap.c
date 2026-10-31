@@ -17,11 +17,8 @@ trapinit(void)
 }
 
 // x86_64: the local APIC timer interrupt (riscv: clockintr()).
-// Count a tick and then send an EOI to the local APIC; without
-// it the APIC keeps the vector in service and delivers no
-// further interrupts of equal or lower priority. (riscv: writing
-// stimecmp both cleared the request and armed the next one; the
-// LAPIC timer is periodic and rearms itself.)
+// The timer is periodic, but each interrupt needs an EOI or no
+// more come (riscv: writing stimecmp cleared and rearmed it).
 static void
 timerintr(void)
 {
@@ -34,15 +31,9 @@ timerintr(void)
   lapiceoi();
 }
 
-// x86_64: print an unexpected trap, named after Linux's
-// show_regs(). It only prints; the caller decides what to do
-// next, since a kernel fault will panic but a user fault will
-// only kill the process (riscv: kerneltrap() and usertrap()
-// each printed scause, sepc and stval themselves).
-// cs tells who trapped: its low 2 bits are the CPL (0 kernel,
-// 3 user). rsp and rflags are those at the time of the trap.
-// Uses earlyputs/earlyputx rather than printk, so a fault
-// while printk holds its lock does not deadlock here.
+// x86_64: print an unexpected trap (riscv: kerneltrap() and
+// usertrap() printed scause, sepc and stval). Uses earlyputs, not
+// printk, so a fault while printk holds its lock cannot deadlock.
 static void
 show_regs(struct trapframe *tf)
 {
@@ -65,23 +56,18 @@ show_regs(struct trapframe *tf)
   earlyputs("\n");
 }
 
-// x86_64: did the trap come from user space? The low 2 bits of
-// the saved cs are the CPL (riscv: SPP in sstatus). Linux's name.
+// x86_64: from user space? The low 2 bits of cs are the CPL
+// (riscv: SPP in sstatus).
 static int
 user_mode(struct trapframe *tf)
 {
   return (tf->cs & 3) == 3;
 }
 
-// x86_64: every interrupt, exception and system call comes here,
-// from the kernel or from user space alike (riscv: usertrap() via
-// trampoline.S and kerneltrap() via kernelvec.S). alltraps in
-// trapasm.S builds the trapframe on the kernel stack and passes
-// it in tf; returning goes back through trapret and iretq.
-// The vector number in tf->trapno tells what happened, so one
-// switch replaces the scause checks of riscv's devintr().
-// Any other trap from the kernel is a bug, so print it and stop;
-// returning would rerun the faulting instruction forever.
+// x86_64: every trap comes here from alltraps, from the kernel or
+// from user space (riscv: usertrap() and kerneltrap()), and
+// returns through trapret. tf->trapno replaces scause.
+// An unknown trap from the kernel is a bug: print it and stop.
 void
 trap(struct trapframe *tf)
 {
@@ -90,8 +76,7 @@ trap(struct trapframe *tf)
     timerintr();
     break;
   case T_SYSCALL:
-    // an interrupt gate turned interrupts off; the system call
-    // can run with them on, as in riscv's usertrap().
+    // the interrupt gate turned interrupts off.
     intr_on();
     // TEST(7-a): syscall() comes in 7-b. The CPU must have built
     // the frame at TSS sp0, which is where allocproc() put it.
@@ -112,9 +97,7 @@ trap(struct trapframe *tf)
     for (;;) ;
   }
   // give up the CPU if this is a timer interrupt.
-  // x86_64: kernel and user traps share this one entry, so
-  // myproc() == 0 means the interrupt came in scheduler()'s
-  // safe_halt(), where there is nothing to yield.
+  // x86_64: myproc() is 0 if it came in scheduler()'s safe_halt().
   if (myproc() != 0 && tf->trapno == T_IRQ0 + IRQ_TIMER)
     yield();
 }

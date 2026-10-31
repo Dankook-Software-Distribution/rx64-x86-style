@@ -11,10 +11,8 @@
 #include "proc.h"
 #include "defs.h"
 
-// the initial GDT contents. Each CPU has its own GDT in struct
-// cpu, because each needs its own TSS descriptor, and seginit()
-// copies this template into it (as Linux's per-CPU gdt_page
-// starts from the same initializer on every CPU).
+// the initial GDT contents; seginit() copies it into each CPU's
+// own GDT in struct cpu.
 static const uint64 gdt_template[NSEGS] = {
   // [0] is the null descriptor, required by the CPU.
   [KCSEG >> 3] = 0x00209A0000000000, // P, DPL 0, code, read, L
@@ -26,14 +24,9 @@ static const uint64 gdt_template[NSEGS] = {
 };
 
 // fill in c's TSS and the GDT slots that describe it.
-// x86_64: the TSS descriptor (SDM Vol. 3A Figure 10-4). A
-// system descriptor is 16 bytes in 64-bit mode, so it takes two
-// GDT slots: the low one is laid out like a code or data
-// descriptor with base[31:0] and the limit, the high one holds
-// base[63:32]. Type 9 is an available 64-bit TSS; ltr changes
-// it to 0xB (busy). An io_bitmap_base beyond the limit means
-// there is no I/O bitmap, so user in/out raise #GP. Named after
-// Linux's set_tss_desc().
+// x86_64: the 16-byte TSS descriptor takes two GDT slots: the
+// low one like a code/data descriptor with base[31:0] and limit,
+// the high one base[63:32]. Type 9 is an available 64-bit TSS.
 static void
 set_tss_desc(struct cpu *c)
 {
@@ -52,16 +45,10 @@ set_tss_desc(struct cpu *c)
   c->gdt[(TSSSEG >> 3) + 1] = base >> 32; // base[63:32]
 }
 
-// set up and load this CPU's GDT: copy the template into
-// mycpu()->gdt, add the TSS descriptor, lgdt it, then ltr. The
-// boot GDT in entry.S sits at a physical address that only the
-// identity map covers, so switch to gdt's high address before
-// that map goes away. CS is not reloaded: KCSEG and its
-// descriptor are the same in both GDTs, and ds, es and ss stay
-// null (Linux's switch_to_new_gdt() also only does lgdt).
-// ltr must follow lgdt, since it reads the TSS descriptor from
-// the GDT just loaded; the boot GDT has no slot 5. It runs once
-// per CPU, as Linux's cpu_init() does through load_TR_desc().
+// set up and load this CPU's GDT: copy the template, add the TSS
+// descriptor, lgdt, then ltr (once per CPU). Leaves entry.S's
+// boot GDT, which only the identity map reaches. CS keeps KCSEG,
+// the same in both GDTs.
 void
 seginit(void)
 {

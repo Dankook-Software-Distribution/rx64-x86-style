@@ -26,15 +26,8 @@ struct spinlock wait_lock;
 // Allocate a page for each process's kernel stack.
 // Map it high in memory, followed by an invalid
 // guard page.
-// x86_64: the stacks sit just above the RAM mapping at KSTACKBASE
-// (riscv: beneath TRAMPOLINE), so an overflow faults on the guard
-// page instead of silently overwriting the direct map, like
-// Linux's VMAP_STACK. kalloc() returns a kernel virtual address
-// (riscv: the physical address, hence its name pa), so the
-// variable is named stack and the PTE gets V2P(stack). Stacks
-// are writable and never executed: PTE_RW | PTE_XD (riscv:
-// PTE_R | PTE_W; x86 has no R bit, and XD forbids execution
-// where riscv's X would allow it).
+// x86_64: at KSTACKBASE above the RAM map (riscv: below
+// TRAMPOLINE). kalloc() returns a virtual address, hence V2P().
 void
 proc_mapstacks(pagetable_t kpgtbl)
 {
@@ -67,12 +60,8 @@ procinit(void)
 // Must be called with interrupts disabled,
 // to prevent race with process being moved
 // to a different CPU.
-// x86_64: riscv read the hart id from tp. For now only the boot
-// CPU runs (-smp 1) and it is CPU 0, as Linux treats the boot CPU
-// before per-CPU data is set up. Replace this when other CPUs
-// start: x86 can find the current CPU by its LAPIC ID (through a
-// table from APIC ID to cpus[] index) or by gs, and the choice
-// waits until then.
+// x86_64: riscv read the hart id from tp. Only the boot CPU runs
+// for now; step 8 looks the CPU up by its LAPIC ID.
 int
 cpuid()
 {
@@ -144,16 +133,10 @@ allocproc(void)
   p->pid = allocpid();
   p->state = USED;
 
-  // x86_64: the trapframe is the top of the kernel stack
-  // (riscv: a page of its own from kalloc(), so that
-  // trampoline.S could reach it). On a trap from user mode the
-  // CPU switches to the TSS rsp0, which the scheduler sets to
-  // p->kstack + PGSIZE, and pushes the frame from there down.
-  // It belongs to the stack page, so freeproc() must not
-  // kfree() it.
+  // x86_64: the trapframe is the top of the kernel stack, where
+  // the CPU pushes it from TSS sp0 (riscv: a page of its own).
   p->trapframe = (struct trapframe *)(p->kstack + PGSIZE) - 1;
-  // x86_64: trapret pops every register in the trapframe into
-  // user space, so clear what the stack page held before.
+  // x86_64: trapret pops all of it into user registers.
   memset(p->trapframe, 0, sizeof(*p->trapframe));
 
   // A user page table that maps only the kernel.
@@ -165,13 +148,9 @@ allocproc(void)
   }
 
   // Set up new context to start executing at forkret.
-  // x86_64: swtch() enters forkret with jmp, which pushes no
-  // return address, so leave an 8-byte slot below the trapframe
-  // in its place. That gives rsp % 16 == 8 at function entry, as
-  // the ABI expects (the trapframe is 16-byte aligned since
-  // sizeof(struct trapframe) is 176). The slot holds trapret's
-  // address, so forkret returns into trapret, which pops the
-  // trapframe and enters user space with iretq.
+  // x86_64: swtch() jumps to forkret, so the 8-byte slot below the
+  // trapframe stands in for a return address: forkret returns to
+  // trapret, which pops the trapframe and does iretq.
   memset(&p->context, 0, sizeof(p->context));
   p->context.rsp = (uint64)(p->trapframe) - 8;
   *(uint64 *)p->context.rsp = (uint64)trapret;
@@ -182,9 +161,7 @@ allocproc(void)
 // free a proc structure and the data hanging from it,
 // including user pages.
 // p->lock must be held.
-// x86_64: riscv also kfree()s p->trapframe. Here the trapframe
-// is the top of the kernel stack page (see allocproc()), which
-// stays with the proc slot, so there is nothing to free.
+// x86_64: no kfree(p->trapframe); it is part of the kernel stack.
 static void
 freeproc(struct proc *p)
 {
@@ -201,10 +178,8 @@ freeproc(struct proc *p)
 }
 
 // Create a user page table for a given process, with no user memory.
-// x86_64: riscv also maps the trampoline and trapframe pages here.
-// Neither exists: a trap enters the kernel through the IDT with
-// the user cr3 still loaded, and uvmcreate() already copies the
-// kernel half, which holds the kernel stack and its trapframe.
+// x86_64: no trampoline or trapframe pages to map (riscv); the
+// kernel half comes from uvmcreate().
 pagetable_t
 proc_pagetable(struct proc *p)
 {
@@ -224,49 +199,6 @@ void
 proc_freepagetable(pagetable_t pagetable, uint64 sz)
 {
   uvmfree(pagetable, sz);
-}
-
-// TEST(5): two kernel threads that the timer preempts.
-// forkret() returns into the function stored in the slot below
-// the trapframe. scheduler() hands them interrupts off, so they
-// turn them on. They must never return. Expect a and b mixed
-// on the serial port.
-static void
-test_thread(char c)
-{
-  intr_on();
-  for (;;) {
-    for (volatile int i = 0; i < 10000000; i++)
-      ;
-    printk("%c", c);
-  }
-}
-
-static void
-test_a(void)
-{
-  test_thread('a');
-}
-
-static void
-test_b(void)
-{
-  test_thread('b');
-}
-
-void
-kthread_test(void)
-{
-  void (*fn[])(void) = { test_a, test_b };
-  struct proc *p;
-
-  for (int i = 0; i < 2; i++) {
-    if ((p = allocproc()) == 0)
-      panic("kthread_test");
-    *(uint64 *)p->context.rsp = (uint64)fn[i];
-    p->state = RUNNABLE;
-    release(&p->lock);
-  }
 }
 
 // TEST(7-a): user processes made by hand, without exec. Each
@@ -362,11 +294,8 @@ scheduler(void)
   for (;;) {
     // Turn interrupts off to avoid a possible race between an
     // interrupt and hlt.
-    // x86_64: riscv first does intr_on() so that pending
-    // interrupts get taken, but sti holds them off until after
-    // the next instruction, so sti; cli would take none. As in
-    // Linux's do_idle(), interrupts are taken by safe_halt()
-    // below and by processes, which run with interrupts on.
+    // x86_64: no intr_on() first (riscv): sti; cli takes none.
+    // Interrupts come in safe_halt() and in processes.
     intr_off();
 
     int found = 0;
@@ -378,13 +307,8 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
-        // x86_64: on a trap from CPL 3 the CPU loads rsp from
-        // the TSS's sp0 before pushing the trapframe, so point
-        // it at the top of p's kernel stack, where allocproc()
-        // placed p->trapframe. riscv has no such register:
-        // trampoline.S read the stack from the trapframe page.
-        // Linux does the same in __switch_to()
-        // (update_task_stack()).
+        // x86_64: a trap from user mode pushes the trapframe at
+        // TSS sp0 (riscv: trampoline.S read the stack pointer).
         c->tss.sp0 = p->kstack + PGSIZE;
         // x86_64: switch page tables here (riscv: userret did).
         write_cr3(V2P(p->pagetable));
@@ -404,9 +328,8 @@ scheduler(void)
     }
     if (found == 0) {
       // nothing to run; stop running on this core until an interrupt.
-      // x86_64: riscv's wfi wakes on a pending interrupt even
-      // with interrupts off, but hlt with IF=0 never wakes, so
-      // safe_halt() enables interrupts and halts in one step.
+      // x86_64: hlt with IF=0 never wakes (riscv's wfi does), so
+      // safe_halt() does sti; hlt.
       safe_halt();
     }
   }
@@ -452,9 +375,8 @@ yield(void)
 
 // A fork child's very first scheduling by scheduler()
 // will swtch to forkret.
-// x86_64: riscv jumps to userret in the trampoline here. Ours
-// just returns, into the slot allocproc() left below the
-// trapframe, which holds trapret.
+// x86_64: returns into trapret through the slot allocproc() set
+// up (riscv: jumps to userret in the trampoline).
 void
 forkret(void)
 {

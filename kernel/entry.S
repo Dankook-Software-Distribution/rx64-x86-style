@@ -4,11 +4,9 @@
 
         # x86_64: qemu -kernel loads us as a Multiboot kernel
         # (riscv: qemu jumped to 0x80000000 in M-mode, 64-bit).
-        # Flag bit 16 makes qemu use the addresses below instead
-        # of the ELF headers, so the 64-bit ELF loads. All
-        # addresses are physical, hence V2P_WO.
-        # The header must be 4-byte aligned in the first 8KB of
-        # the file; kernel.ld puts .multiboot first.
+        # Flag bit 16 makes qemu use these physical addresses
+        # instead of the 64-bit ELF headers. Must be in the first
+        # 8KB; kernel.ld puts .multiboot first.
         .section .multiboot, "a"
         .align 4
 mbhdr:
@@ -22,10 +20,7 @@ mbhdr:
         .long V2P_WO(_entry)            # entry_addr: jump here after loading
 
         # x86_64: Multiboot enters in 32-bit protected mode with
-        # paging off, EAX = 0x2BADB002, EBX = Multiboot info,
-        # interrupts off. ESP and GDTR are undefined, so set up a
-        # stack before any call/push and a GDT before reloading
-        # segment registers.
+        # paging and interrupts off; ESP and GDTR are undefined.
         .text
         .code32
 .globl _entry
@@ -36,9 +31,8 @@ _entry:
         movb $'A', %al
         outb %al, %dx
 
-        # x86_64: zero [edata, end). qemu's Multiboot loader copies
-        # the file only up to edata and leaves .bss as is (riscv:
-        # qemu loaded the ELF, which covered .bss).
+        # x86_64: zero [edata, end); Multiboot loads only up to
+        # edata (riscv: qemu loaded the whole ELF).
         cld
         movl $V2P_WO(edata), %edi
         xorl %eax, %eax
@@ -46,17 +40,13 @@ _entry:
         subl $V2P_WO(edata), %ecx
         rep stosb
 
-        # set up a stack for C. after the bss loop, because the
-        # stack lives in .bss. ebp = 0 ends the frame-pointer chain
-        # for backtraces.
+        # set up a stack for C, after the bss loop since it lives
+        # in .bss. ebp = 0 ends the frame-pointer chain.
         movl $V2P_WO(bootstacktop), %esp
         xorl %ebp, %ebp
 
         # x86_64: switch to long mode (riscv: already 64-bit at boot).
-        # SDM Vol. 3A 5.1.2 and 10.8.5: CR4.PAE and EFER.LME must be
-        # set while paging is off, and CR3 must hold the page table
-        # before CR0.PG turns paging on; otherwise #GP or #PF.
-        # LA57 stays 0, so this is 4-level paging.
+        # PAE, cr3 and EFER.LME must all be set before CR0.PG.
         lgdt V2P_WO(bootgdtdesc)        # physical: paging is still off
 
         movl %cr4, %eax
@@ -66,9 +56,8 @@ _entry:
         movl $V2P_WO(pml4), %eax
         movl %eax, %cr3
 
-        # EFER is an MSR: rdmsr/wrmsr move it through edx:eax, with
-        # the MSR number in ecx. NXE lets the kernel page table use
-        # PTE_XD later.
+        # EFER is an MSR (number in ecx, value in edx:eax). NXE
+        # makes PTE_XD usable.
         movl $MSR_EFER, %ecx
         rdmsr
         orl $(EFER_LME | EFER_NXE), %eax
@@ -78,10 +67,8 @@ _entry:
         orl $CR0_PG, %eax
         movl %eax, %cr0
 
-        # paging and long mode are on, but CS is still a 32-bit
-        # segment (compatibility mode). a far jump to a code segment
-        # with L=1 enters 64-bit mode. still at the low address,
-        # which the identity part of the boot page table covers.
+        # CS is still 32-bit (compatibility mode); a far jump to
+        # the L=1 code segment enters 64-bit mode, still low.
         ljmp $KCSEG, $V2P_WO(start64)
 
         .code64
@@ -98,12 +85,8 @@ start64:
         outb %al, %dx
 
         # x86_64: jump to the high address the kernel is linked at
-        # (riscv: linked at 0x80000000 and run there, nothing to do).
-        # C code built with -mcmodel=kernel assumes high addresses,
-        # and the identity map goes away once main switches to the
-        # real kernel page table. a plain jmp is RIP-relative and
-        # would land in the low copy, so jump through a register
-        # holding the absolute high address.
+        # (riscv: ran where linked). A plain jmp is RIP-relative and
+        # would stay low, so go through a register.
         movabs $high64, %rax
         jmp *%rax
 
@@ -111,16 +94,12 @@ high64:
         movb $'C', %al
         outb %al, %dx
 
-        # move the stack to bootstacktop's high address for the same
-        # reason. bootstacktop is 16-byte aligned, as the SysV ABI
-        # wants rsp before a call. ebp = 0 ends the frame-pointer
-        # chain again.
+        # move the stack to its high address too (16-byte aligned
+        # for the call); ebp = 0 ends the frame-pointer chain.
         movabs $bootstacktop, %rsp
         xorl %ebp, %ebp
 
-        # call is RIP-relative too, so it must come after the jump
-        # to reach the high main. main should not return; if it
-        # does, fall into spin.
+        # main should not return; if it does, fall into spin.
         call main
 
 spin:
@@ -128,23 +107,19 @@ spin:
         jmp spin
 
         # x86_64: stack for the boot CPU only (riscv: stack0, one
-        # per CPU). it stays CPU 0's scheduler stack after boot.
-        # other CPUs get kalloc'd stacks when they are started.
-        # aligned to its size so a guard page can go below it.
+        # per CPU); it stays CPU 0's scheduler stack.
         .bss
         .balign KSTACKSIZE
 bootstack:
         .space KSTACKSIZE
 bootstacktop:
 
-        # x86_64: boot page table, used only until kvminit() builds
-        # the real one (riscv: paging stayed off until kvminithart).
-        # Maps physical 0..1GB twice with 2MB pages:
-        #   VA 0         -> PA 0   identity, so the code keeps running
-        #                          at its low address when paging turns on
+        # x86_64: boot page table, used only until kvminithart()
+        # (riscv: paging stayed off until then). Maps physical
+        # 0..1GB twice with 2MB pages:
+        #   VA 0         -> PA 0   identity, while still running low
         #   VA KERNBASE  -> PA 0   where the kernel is linked
-        # Entries hold physical addresses, hence V2P_WO. Filled in at
-        # link time and placed in .data so Multiboot loads it.
+        # In .data, not .bss: Multiboot loads only up to edata.
         .data
         .balign 4096
 pml4:
@@ -168,12 +143,8 @@ pd:
         .set pd_i, pd_i + 1
         .endr
 
-        # x86_64: boot GDT, just enough to enter long mode. The far
-        # jump into 64-bit code needs a code segment with L=1; data
-        # segments are not needed since ds/es/ss can be null in
-        # 64-bit mode. seginit() replaces this with the real GDT.
-        # The code segment sits in slot 1, as in the final GDT, so
-        # KCSEG is the same selector in both.
+        # x86_64: boot GDT, just a 64-bit code segment for the far
+        # jump, in slot 1 as in seginit()'s GDT so KCSEG matches.
         .data
         .balign 8
 bootgdt:

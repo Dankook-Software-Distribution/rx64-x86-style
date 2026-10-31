@@ -1,10 +1,7 @@
 // x86_64: the I/O APIC routes device IRQ pins to a CPU's local
 // APIC (riscv: the PLIC). ioapicinit() points pin n at vector
-// T_IRQ0 + n and masks every pin; a driver then unmasks its own
-// pin with ioapicenable(). Unlike the PLIC there is no claim or
-// complete here: the EOI goes to the local APIC (lapiceoi()).
-// On qemu pc, ISA IRQs 1-15 sit on the pin of the same number,
-// but IRQ 0 (the PIT) is on pin 2; xv6 uses only COM1 and IDE.
+// T_IRQ0 + n, masked; a driver unmasks its pin with
+// ioapicenable(). No claim/complete: the EOI goes to the LAPIC.
 
 #include "types.h"
 #include "x86.h"
@@ -53,8 +50,7 @@ ioapicinit(void)
 // Route irq to vector T_IRQ0 + irq on cpu, edge-triggered and
 // active high as ISA devices are, and unmask it. The destination
 // goes in first so the pin is never live with a stale one.
-// cpu should be the target's local APIC ID; with -smp 1 it is 0,
-// the same as cpuid(). Revisit this when SMP comes in.
+// cpu is the target's local APIC ID (0 with -smp 1; see step 8).
 void
 ioapicenable(int irq, int cpu)
 {

@@ -24,30 +24,20 @@ kvmmake(void)
   kpgtbl = (pagetable_t)kalloc();
   memset(kpgtbl, 0, PGSIZE);
 
-  // x86_64: RAM is mapped at KERNBASE + pa instead of at pa
-  // (riscv: identity map), so each mapping passes the virtual
-  // address and V2P() of it. COM1 and IDE are I/O ports and need
-  // no mapping (riscv: UART0, VIRTIO0, PLIC), and there is no
-  // trampoline.
+  // x86_64: RAM is at KERNBASE + pa (riscv: identity map). COM1
+  // and IDE are I/O ports, so no UART0/VIRTIO0 mappings.
 
   // IOAPIC and LAPIC registers, one page each.
-  // x86_64: these replace the PLIC. They are MMIO above 2GB
-  // physical, outside the KERNBASE window, so they go in the
-  // device window at DEV2V(pa), and pa is already physical (no
-  // V2P). Device registers change on their own and writes to
-  // them are commands (e.g. LAPIC EOI), so PCD | PWT makes the
-  // pages uncacheable, as Linux's ioremap() does; XD because
-  // they are never code.
+  // x86_64: these replace the PLIC. They sit above 2GB physical,
+  // so they go at DEV2V(pa), uncached (PCD | PWT).
   kvmmap(kpgtbl, DEV2V(IOAPIC_PA), IOAPIC_PA, PGSIZE,
          PTE_RW | PTE_XD | PTE_PCD | PTE_PWT);
   kvmmap(kpgtbl, DEV2V(LAPIC_PA), LAPIC_PA, PGSIZE,
          PTE_RW | PTE_XD | PTE_PCD | PTE_PWT);
 
   // map kernel text executable and read-only.
-  // x86_64: x86 has no R bit (present implies readable) and
-  // pages are executable unless XD is set, so perm is 0.
-  // read-only is not enforced for the kernel itself while
-  // CR0.WP is 0.
+  // x86_64: perm 0 (riscv: PTE_R | PTE_X); no R bit, and no XD
+  // means executable.
   kvmmap(kpgtbl, KERNBASE, V2P(KERNBASE), (uint64)etext - KERNBASE, 0);
 
   // map kernel data and the physical RAM we'll make use of.
@@ -81,9 +71,7 @@ kvminit(void)
 // Switch the current CPU's h/w page table register to
 // the kernel's page table, and enable paging.
 // x86_64: paging is already on since entry.S; this leaves the
-// boot page table, and with it the identity map of low memory.
-// cr3 takes a physical address. Writing cr3 also flushes the
-// TLB, so riscv's sfence.vma before and after is not needed.
+// boot page table. Writing cr3 flushes the TLB (riscv: sfence.vma).
 void
 kvminithart()
 {
@@ -94,18 +82,14 @@ kvminithart()
 // that corresponds to virtual address va.  If alloc!=0,
 // create any required page-table pages.
 //
-// x86_64: 4-level paging has four levels of page-table
-// pages (riscv Sv39: three). A page-table page contains 512
-// 64-bit PTEs. A 64-bit virtual address is split into six
-// fields:
+// x86_64: four levels (riscv Sv39: three). A virtual address is:
 //   48..63 -- must equal bit 47 (canonical).
 //   39..47 -- 9 bits of level-3 (PML4) index.
 //   30..38 -- 9 bits of level-2 (PDPT) index.
 //   21..29 -- 9 bits of level-1 (PD) index.
 //   12..20 -- 9 bits of level-0 (PT) index.
 //    0..11 -- 12 bits of byte offset within the page.
-// Kernel addresses are in the upper half, so the check is
-// canonical form rather than va < MAXVA.
+// The kernel is in the upper half, so check canonical form, not MAXVA.
 pte_t *
 walk(pagetable_t pagetable, uint64 va, int alloc)
 {
@@ -114,18 +98,14 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
 
   for (int level = 3; level > 0; level--) {
     pte_t *pte = &pagetable[PX(level, va)];
-    // x86_64: a PTE holds a physical address, but the kernel
-    // reads page tables through the KERNBASE map, so convert
-    // with P2V() and V2P() (riscv: identity map, no conversion).
+    // x86_64: PTEs hold physical addresses; P2V()/V2P() convert.
     if (*pte & PTE_P) {
       pagetable = (pagetable_t)P2V(PTE2PA(*pte));
     } else {
       if (!alloc || (pagetable = (pagetable_t)kalloc()) == 0)
         return 0;
       memset(pagetable, 0, PGSIZE);
-      // x86_64: the CPU ANDs the permissions of all levels, so
-      // intermediate entries allow everything and the last PTE
-      // decides. Never set PS (bit 7) here.
+      // x86_64: the CPU ANDs all levels, so the leaf PTE decides.
       *pte = PA2PTE(V2P(pagetable)) | PTE_P | PTE_RW | PTE_US;
     }
   }
@@ -141,8 +121,7 @@ walkaddr(pagetable_t pagetable, uint64 va)
   pte_t *pte;
   uint64 pa;
 
-  // x86_64: USERTOP (riscv: MAXVA) leaves out the guard page at
-  // the top, and walk() panics on the non-canonical addresses above.
+  // x86_64: USERTOP (riscv: MAXVA); walk() panics above it.
   if (va >= USERTOP)
     return 0;
 
@@ -162,8 +141,7 @@ walkaddr(pagetable_t pagetable, uint64 va)
 // va and size MUST be page-aligned.
 // Returns 0 on success, -1 if walk() couldn't
 // allocate a needed page-table page.
-// x86_64: perm is uint64 (riscv: int) so that PTE_XD, bit 63,
-// is not cut off.
+// x86_64: perm is uint64 (riscv: int) to keep PTE_XD, bit 63.
 int
 mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, uint64 perm)
 {
@@ -197,12 +175,8 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, uint64 perm)
 
 // create a user page table that maps only the kernel.
 // returns 0 if out of memory.
-// x86_64: riscv starts with an empty table because the trampoline
-// switches satp to the kernel page table on a trap. x86_64 has no
-// trampoline: a trap or system call enters the kernel with the
-// user cr3 still loaded, so every user page table must map the
-// kernel. Copy the PML4 entries of the kernel half (256..511) so
-// that the lower-level kernel page-table pages are shared.
+// x86_64: a trap keeps the user cr3 (riscv: the trampoline switched
+// satp), so share the kernel half, PML4 entries 256..511.
 pagetable_t
 uvmcreate()
 {
@@ -235,7 +209,7 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
     if ((*pte & PTE_P) == 0) // has physical page been allocated?
       continue;
     if (do_free) {
-      // x86_64: kfree() takes the KERNBASE address of the page.
+      // x86_64: kfree() takes a virtual address.
       uint64 pa = PTE2PA(*pte);
       kfree(P2V(pa));
     }
@@ -263,8 +237,7 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, uint64 xperm)
       return 0;
     }
     memset(mem, 0, PGSIZE);
-    // x86_64: no PTE_R; a present page is readable. kalloc()
-    // returns a KERNBASE address, so the PTE gets V2P(mem).
+    // x86_64: no PTE_R (riscv); the PTE gets V2P(mem).
     if (mappages(pagetable, a, PGSIZE, V2P(mem), PTE_US | xperm) != 0) {
       kfree(mem);
       uvmdealloc(pagetable, a, oldsz);
@@ -294,25 +267,20 @@ uvmdealloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
 
 // Recursively free page-table pages.
 // All leaf mappings must already have been removed.
-// x86_64: level is 3 for the PML4 and 0 for a page table
-// (riscv: no level argument). uvmfree() starts at 3.
+// x86_64: level is 3 for the PML4, 0 for a page table.
 void
 freewalk(pagetable_t pagetable, int level)
 {
   // there are 2^9 = 512 PTEs in a page table.
-  // x86_64: PML4 entries 256..511 are the kernel half, copied
-  // from kernel_pagetable by uvmcreate(). The page-table pages
-  // below them are shared with every process, so skip them.
+  // x86_64: skip PML4 entries 256..511, the shared kernel half.
   int n = (level == 3) ? 256 : 512;
 
   for (int i = 0; i < n; i++) {
     pte_t pte = pagetable[i];
-    // x86_64: riscv tells a pointer to a lower-level table by
-    // R/W/X being 0. On x86 an intermediate entry has the same
-    // P|RW|US bits as a leaf, so the level decides instead.
+    // x86_64: the level tells a table from a leaf (riscv: R/W/X
+    // bits); the flags look the same here.
     if ((pte & PTE_P) && level > 0) {
       // this PTE points to a lower-level page table.
-      // x86_64: the PTE holds a physical address; P2V() to read it.
       uint64 child = PTE2PA(pte);
       freewalk((pagetable_t)P2V(child), level - 1);
       pagetable[i] = 0;
@@ -356,8 +324,7 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
     flags = PTE_FLAGS(*pte);
     if ((mem = kalloc()) == 0)
       goto err;
-    // x86_64: read the parent's page through P2V() and map the
-    // copy by its physical address.
+    // x86_64: PTEs hold physical addresses.
     memmove(mem, (char *)P2V(pa), PGSIZE);
     if (mappages(new, i, PGSIZE, V2P(mem), flags) != 0) {
       kfree(mem);
@@ -519,9 +486,8 @@ vmfault(pagetable_t pagetable, uint64 psz, uint64 va, int read)
   if (mem == 0)
     return 0;
   memset((void *)mem, 0, PGSIZE);
-  // x86_64: no PTE_R; a present page is readable. sbrk memory is
-  // data, so PTE_XD (riscv: no PTE_X). Return the physical address,
-  // like walkaddr(), since the copy functions P2V() whichever they got.
+  // x86_64: no PTE_R; PTE_XD for data. Returns a physical
+  // address, like walkaddr().
   if (mappages(pagetable, va, PGSIZE, V2P(mem), PTE_RW | PTE_US | PTE_XD) != 0) {
     kfree((void *)mem);
     return 0;
@@ -540,87 +506,4 @@ ismapped(pagetable_t pagetable, uint64 va)
     return 1;
   }
   return 0;
-}
-
-// TEST(6): build user page tables, copy in and out of them,
-// load one into cr3, then free them and check for leaks.
-// Expect "uvm_test: ok" on the serial port.
-#define TEST6_SZ (2 * 1024 * 1024 + 3 * PGSIZE) // spans two PTs
-#define TEST6_TOP (USERTOP - PGSIZE)            // PML4 entry 255
-
-static int test6_fail;
-
-static void
-test6_check(int ok, char *what)
-{
-  if (!ok) {
-    printk("uvm_test: FAIL %s\n", what);
-    test6_fail = 1;
-  }
-}
-
-void
-uvm_test(void)
-{
-  char msg[] = "hello, user page table";
-  char buf[sizeof(msg)];
-  uint64 off = PGSIZE - 3; // crosses a page boundary
-  pagetable_t upt, upt2;
-  char *mem;
-  int nfree;
-
-  nfree = kfreecount();
-
-  upt = uvmcreate();
-  test6_check(upt != 0, "uvmcreate");
-  test6_check(upt[511] == kernel_pagetable[511], "kernel half");
-  test6_check(uvmalloc(upt, 0, TEST6_SZ, PTE_RW | PTE_XD) == TEST6_SZ,
-              "uvmalloc");
-
-  // the highest user page: the last entry freewalk() follows.
-  mem = kalloc();
-  test6_check(mappages(upt, TEST6_TOP, PGSIZE, V2P(mem),
-                       PTE_RW | PTE_US | PTE_XD) == 0,
-              "mappages top");
-  test6_check(walkaddr(upt, TEST6_TOP) == V2P(mem), "walkaddr top");
-  test6_check(walkaddr(upt, USERTOP) == 0, "walkaddr guard");
-  test6_check(walkaddr(upt, TEST6_SZ) == 0, "walkaddr unmapped");
-
-  test6_check(copyout(upt, TEST6_SZ, off, msg, sizeof(msg)) == 0,
-              "copyout");
-  memset(buf, 0, sizeof(buf));
-  test6_check(copyin(upt, TEST6_SZ, buf, off, sizeof(buf)) == 0, "copyin");
-  test6_check(memcmp(buf, msg, sizeof(msg)) == 0, "copyin data");
-  memset(buf, 0, sizeof(buf));
-  test6_check(copyinstr(upt, TEST6_SZ, buf, off, sizeof(buf)) == 0,
-              "copyinstr");
-  test6_check(strncmp(buf, msg, sizeof(msg)) == 0, "copyinstr data");
-  test6_check(copyout(upt, TEST6_SZ, TEST6_SZ - 1, msg, 2) == -1,
-              "copyout past sz");
-
-  upt2 = uvmcreate();
-  test6_check(upt2 != 0, "uvmcreate 2");
-  test6_check(uvmcopy(upt, upt2, TEST6_SZ) == 0, "uvmcopy");
-  test6_check(walkaddr(upt2, off) != walkaddr(upt, off), "uvmcopy pages");
-  memset(buf, 0, sizeof(buf));
-  test6_check(copyin(upt2, TEST6_SZ, buf, off, sizeof(buf)) == 0,
-              "copyin 2");
-  test6_check(memcmp(buf, msg, sizeof(msg)) == 0, "uvmcopy data");
-
-  // run on the user page table: the kernel half must be there.
-  // CR0.WP and SMAP are off, so the kernel reads the user page
-  // through the user address too.
-  write_cr3(V2P(upt));
-  printk("uvm_test: on the user page table\n");
-  test6_check(*(volatile char *)off == msg[0], "user address");
-  kvminithart();
-
-  uvmunmap(upt, TEST6_TOP, 1, 1);
-  uvmfree(upt, TEST6_SZ);
-  uvmfree(upt2, TEST6_SZ);
-  test6_check(kfreecount() == nfree, "leak");
-
-  if (test6_fail)
-    panic("uvm_test");
-  printk("uvm_test: ok\n");
 }

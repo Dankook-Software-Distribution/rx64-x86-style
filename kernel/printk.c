@@ -15,10 +15,7 @@
 #include "defs.h"
 #include "proc.h"
 
-// x86_64: print through early.c until the console is up
-// (riscv: consputc() from the start). console.c needs sleep(),
-// wakeup() and copyin/copyout, which come with processes, so it
-// cannot be built yet. Remove this line once console.c is in.
+// x86_64: print through early.c until console.c is ported (7-g).
 #define consputc earlyputc
 
 volatile int panicking = 0; // printing a panic message

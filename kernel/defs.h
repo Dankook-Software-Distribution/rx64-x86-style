@@ -63,7 +63,6 @@ void            seginit(void);
 void*           kalloc(void);
 void            kfree(void *);
 void            kinit(void);
-int             kfreecount(void); // TEST(6)
 
 // log.c
 void            initlog(int, struct superblock*);
@@ -96,7 +95,6 @@ void            setkilled(struct proc*);
 struct cpu*     mycpu(void);
 struct proc*    myproc();
 void            procinit(void);
-void            kthread_test(void); // TEST(5)
 void            user_test(void); // TEST(7-a)
 void            scheduler(void) __attribute__((noreturn));
 void            sched(void);
@@ -176,7 +174,6 @@ int             copyin(pagetable_t, uint64, char *, uint64, uint64);
 int             copyinstr(pagetable_t, uint64, char *, uint64, uint64);
 int             ismapped(pagetable_t, uint64);
 uint64          vmfault(pagetable_t, uint64, uint64, int);
-void            uvm_test(void); // TEST(6)
 
 // plic.c
 void            plicinit(void);

@@ -25,13 +25,11 @@ acquire(struct spinlock *lk)
   if (holding(lk))
     panic("acquire");
 
-  // x86_64: __atomic_exchange_n turns into xchg (riscv:
-  // amoswap.w.aq):
+  // x86_64: __atomic_exchange_n turns into xchg, which is atomic
+  // without a lock prefix (riscv: amoswap.w.aq):
   //   eax = 1
   //   rbx = &lk->locked
   //   xchg %eax, (%rbx)
-  // xchg with a memory operand is atomic even without a lock
-  // prefix.
   //
   // Passing __ATOMIC_ACQUIRE to __atomic_exchange_n tells
   // the C compiler and the processor to not move loads or stores
@@ -70,10 +68,8 @@ release(struct spinlock *lk)
   // and that loads in the critical section occur strictly before
   // the lock is released.
   //
-  // x86_64: no fence is needed. x86 does not reorder a store
-  // with earlier loads or stores (SDM Vol. 3A 11.2.2), so
-  // __ATOMIC_RELEASE only keeps the compiler from moving memory
-  // accesses past the store.
+  // x86_64: no fence (riscv: fence rw,w); x86 keeps stores in
+  // order, so this only restrains the compiler.
   __atomic_store_n(&lk->locked, 0, __ATOMIC_RELEASE);
 
   pop_off();
@@ -98,11 +94,7 @@ push_off(void)
 {
   // disable interrupts to prevent an involuntary context
   // switch while using mycpu().
-  // x86_64: riscv read and cleared sstatus.SIE in one csrrc.
-  // x86 has no such instruction, so read rflags.IF first, then
-  // cli, as Linux's local_irq_save() does. Reading after cli
-  // would always see IF = 0. An interrupt between the two is
-  // harmless: iretq restores rflags.
+  // x86_64: read IF, then cli (riscv: one csrrc did both).
   int old = intr_get();
   intr_off();
 

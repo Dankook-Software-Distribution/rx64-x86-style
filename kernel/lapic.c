@@ -1,9 +1,6 @@
 // x86_64: the local APIC, one per CPU (riscv: CLINT for the
-// timer and PLIC for claim/complete). It is enabled, takes the
-// timer interrupt at vector T_IRQ0 + IRQ_TIMER, and gets an EOI
-// after each interrupt. Device IRQs reach it through the IOAPIC.
-// The 8259 path (LINT0/LINT1) is masked here as well as in
-// i8259.c.
+// timer and PLIC for claim/complete). It runs the timer at
+// T_IRQ0 + IRQ_TIMER and takes an EOI after every interrupt.
 
 #include "types.h"
 #include "x86.h"
@@ -46,10 +43,8 @@ lapic_write(uint32 off, uint32 val)
 }
 
 // enable this CPU's LAPIC and start its timer.
-// The initial count is written last because writing it starts
-// the countdown. 10000000 at divide-by-1 is a fixed guess, not
-// calibrated as Linux does; adjust it if ticks are too fast or
-// slow.
+// Writing the initial count starts the timer, so it goes last.
+// 10000000 is an uncalibrated guess (~100Hz on qemu).
 void
 lapicinit(void)
 {

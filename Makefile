@@ -65,12 +65,8 @@ ifneq ($(shell $(CC) -dumpspecs 2>/dev/null | grep -e '[^f]nopie'),)
 CFLAGS += -fno-pie -nopie
 endif
 
-# x86_64: kernel-only flags. -mcmodel=kernel because the kernel is
-# linked in the top 2GB; -mno-red-zone because interrupts push onto
-# the kernel stack below rsp; -fcf-protection=none because Ubuntu
-# gcc otherwise emits endbr64; -fno-asynchronous-unwind-tables
-# because nothing in the kernel unwinds, and .eh_frame would land
-# in a LOAD segment (gdb uses .debug_frame from -g instead).
+# x86_64: kernel-only flags: linked in the top 2GB; interrupts
+# push below rsp (no red zone); no endbr64; no .eh_frame.
 $K/%.o: CFLAGS += -mcmodel=kernel -mno-red-zone -fcf-protection=none
 $K/%.o: CFLAGS += -fno-asynchronous-unwind-tables
 
@@ -161,10 +157,8 @@ CPUS := 1
 endif
 
 # x86_64: pc machine, Multiboot load via -kernel, COM1 on stdio.
-# The IDE disk (fs.img) is added once ide.c is ported.
-# -d int,cpu_reset and -no-reboot keep a triple fault visible
-# instead of silently rebooting. The log goes to qemu.log, not the
-# screen, because it dumps the registers on every timer interrupt.
+# -d int,cpu_reset and -no-reboot keep a triple fault visible;
+# the log goes to qemu.log, since it dumps every interrupt.
 QEMUOPTS = -machine pc -kernel $K/kernel -m 128M -smp $(CPUS) -nographic
 QEMUOPTS += -serial mon:stdio
 QEMUOPTS += -d int,cpu_reset -D qemu.log -no-reboot -no-shutdown

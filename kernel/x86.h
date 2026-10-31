@@ -6,8 +6,7 @@
 #define FL_IF 0x200 // interrupt enable
 
 // x86_64: control register and EFER bits used by entry.S to turn
-// on paging and long mode (riscv: satp mode field). See SDM
-// Vol. 3A 2.5 and 10.8.5 for the enable sequence.
+// on paging and long mode (riscv: satp mode field).
 #define CR0_PG   (1L << 31) // paging
 #define CR4_PAE  (1L << 5)  // physical address extension; required by long mode
 
@@ -15,16 +14,10 @@
 #define EFER_LME (1L << 8)  // long mode enable
 #define EFER_NXE (1L << 11) // makes PTE_XD usable; reserved (#PF) otherwise
 
-// x86_64: segment selectors
-// selector = GDT index * 8; low 3 bits are TI and RPL, 0 here.
-// users add RPL 3 themselves (UCSEG | 3, UDSEG | 3).
-// the order is fixed by syscall/sysret, as in Linux: syscall
-// loads CS = STAR[47:32] and SS = that + 8, sysret loads
-// SS = STAR[63:48] + 8 and CS = STAR[63:48] + 16. so with
-// STAR[47:32] = KCSEG and STAR[63:48] = KDSEG, kernel data must
-// follow kernel code and user code must follow user data.
-// Linux's 32-bit compat slots are left out; there is no
-// 32-bit user mode.
+// x86_64: segment selectors (riscv has no segmentation).
+// selector = GDT index * 8; users add RPL 3 (UCSEG | 3).
+// syscall/sysret fix the order, as in Linux: kernel data after
+// kernel code, user code after user data.
 #define KCSEG (1 << 3) // kernel 64-bit code, GDT index 1
 #define KDSEG (2 << 3) // kernel data, GDT index 2 (syscall's SS)
 #define UDSEG (3 << 3) // user data, GDT index 3
@@ -36,7 +29,6 @@
 
 // enable device interrupts
 // x86_64: sti sets rflags.IF (riscv: set sstatus.SIE).
-// "memory" keeps the compiler from moving loads/stores across it.
 static inline void
 intr_on()
 {
@@ -71,12 +63,8 @@ r_sp()
 }
 
 // write a byte to an I/O port
-// x86_64: devices like COM1 live in a separate I/O port space,
-// reached only with in/out instructions (riscv: the UART was
-// memory-mapped, so plain loads and stores worked).
-// outb takes the byte in al and the port in dx or as an 8-bit
-// immediate: "a" puts data in al, "Nd" puts port in dx or an
-// immediate. both are inputs only, so there are no outputs.
+// x86_64: COM1 and IDE are in the I/O port space, reached only
+// with in/out (riscv: the UART was memory-mapped).
 static inline void
 outb(uint16 port, uint8 data)
 {
@@ -84,12 +72,8 @@ outb(uint16 port, uint8 data)
 }
 
 // load the GDT register
-// x86_64: riscv has no segmentation, so nothing corresponds.
-// lgdt reads a 10-byte operand from memory: a 2-byte limit
-// (size - 1) and an 8-byte base, the GDT's virtual address.
-// packed drops the 6 bytes of padding the compiler would put
-// after limit to align base; without it lgdt reads a bad base.
-// "m" passes desc itself as a memory operand.
+// x86_64: riscv has no segmentation. lgdt reads a 10-byte
+// limit-and-base operand, hence packed.
 static inline void
 lgdt(uint64 *gdt, int size)
 {
@@ -104,11 +88,8 @@ lgdt(uint64 *gdt, int size)
 }
 
 // load the task register
-// x86_64: riscv has nothing like it. ltr looks up sel in the
-// current GDT, loads TR with the TSS base and limit from that
-// descriptor, and marks the descriptor busy (type 9 -> 0xB), so a
-// second ltr with the same descriptor raises #GP. %w0 names the
-// 16-bit register, since ltr takes r/m16.
+// x86_64: riscv has nothing like it. ltr marks the descriptor
+// busy, so a second ltr with it raises #GP.
 static inline void
 ltr(uint16 sel)
 {
@@ -116,10 +97,7 @@ ltr(uint16 sel)
 }
 
 // load the interrupt descriptor table register
-// x86_64: replaces riscv's write to stvec. The operand has the
-// same 10-byte form as lgdt's: limit (size - 1) and the IDT's
-// virtual address. idt is void * because struct gate_struct is
-// private to idt.c.
+// x86_64: replaces riscv's write to stvec. Same operand as lgdt.
 static inline void
 lidt(void *idt, int size)
 {
@@ -134,9 +112,7 @@ lidt(void *idt, int size)
 }
 
 // read the page-fault address
-// x86_64: on a page fault the CPU puts the virtual address it
-// failed to access in cr2 (riscv: stval). cr2 is not saved in
-// the trapframe, and a later page fault overwrites it.
+// x86_64: riscv: stval. Not in the trapframe; read it early.
 static inline uint64
 read_cr2()
 {
@@ -156,14 +132,9 @@ typedef uint64 *pagetable_t; // 512 PTEs
 
 // 64-bit task state segment (SDM Vol. 3A Figure 10-11), named
 // after Linux's struct x86_hw_tss.
-// x86_64: riscv has nothing like it; uservec loaded the kernel
-// stack pointer from the trapframe itself. On an interrupt or
-// trap from CPL 3 the CPU loads rsp from sp0 before pushing the
-// trap frame. 64-bit mode does no hardware task switching, so
-// this is all the TSS is used for: sp1, sp2 and ist are unused
-// (no IST stacks), and io_bitmap_base beyond the TSS limit means
-// there is no I/O permission bitmap. packed keeps sp0 at offset
-// 4, where the compiler would otherwise pad it to 8.
+// x86_64: riscv has nothing like it (uservec read the stack from
+// the trapframe). A trap from CPL 3 loads rsp from sp0; nothing
+// else here is used. packed keeps sp0 at offset 4.
 struct x86_hw_tss {
   uint32 reserved1;
   uint64 sp0;
@@ -181,11 +152,8 @@ _Static_assert(__builtin_offsetof(struct x86_hw_tss, sp0) == 4,
                "the CPU reads sp0 at offset 4");
 
 // enable interrupts and wait for one
-// x86_64: riscv's wfi wakes on a pending interrupt even with
-// sstatus.SIE clear, but hlt with IF=0 never wakes. sti delays
-// interrupts until the next instruction ends, so sti; hlt
-// cannot lose an interrupt in between. Keep both in one asm so
-// the compiler cannot put anything there. Linux: native_safe_halt().
+// x86_64: hlt with IF=0 never wakes (riscv's wfi does). sti takes
+// effect after the next instruction, so nothing slips in between.
 static inline void
 safe_halt()
 {
@@ -203,12 +171,9 @@ safe_halt()
 #define PGROUNDUP(sz)  (((sz) + PGSIZE - 1) & ~(PGSIZE - 1))
 #define PGROUNDDOWN(a) (((a)) & ~(PGSIZE - 1))
 
-// x86_64: riscv had V/R/W/X/U. x86 has no R bit (present implies
-// readable) and X is inverted into XD, which needs EFER.NXE=1.
-// Bits 6..8 differ by level (D/PS/G/PAT); xv6 leaves them 0.
-// Bit 7 must stay 0 in PDPTEs and PDEs, or the CPU treats the
-// entry as a 1GB/2MB page instead of a pointer to a table. Only
-// entry.S's boot page table sets it (PTE_PS), for 2MB pages.
+// x86_64: riscv had V/R/W/X/U. x86 has no R bit (present means
+// readable), and XD (with EFER.NXE) replaces X. Only entry.S
+// sets PS, for its 2MB boot pages.
 #define PTE_P   (1L << 0)  // present
 #define PTE_RW  (1L << 1)  // Read/write
 #define PTE_US  (1L << 2)  // User/supervisor
@@ -234,20 +199,12 @@ safe_halt()
 #define PX(level, va)  ((((uint64)(va)) >> PXSHIFT(level)) & PXMASK)
 
 // one beyond the highest possible user virtual address.
-// x86_64: 48-bit addresses must be canonical (bits 63..47 equal),
-// so the lower half ends at 1<<47; 0x0000800000000000 is
-// non-canonical and faults with #GP.
+// x86_64: the lower canonical half ends at 1<<47.
 #define MAXVA (1L << (9 + 9 + 9 + 9 + 12 - 1))
 
-// x86_64: a virtual address is canonical when bits 63..47 are all
-// equal, i.e. va is bit 47 sign-extended (riscv Sv39 instead
-// required bits 63..39 to be zero for walk()). Using a
-// non-canonical address faults with #GP, and PX() ignores bits
-// 63..48, so walk() would map such an address at the wrong place.
-// CANONICAL_ADDRESS() sign-extends bit (bits - 1): shift left as
-// unsigned, then right as signed so the top fills with that bit.
-// Names follow Linux's __canonical_address() and
-// __is_canonical_address().
+// x86_64: canonical means bits 63..47 are equal (riscv Sv39:
+// 63..39 zero). PX() ignores bits 63..48, so walk() checks this.
+// CANONICAL_ADDRESS() sign-extends bit (bits - 1).
 #define CANONICAL_ADDRESS(va, bits) \
   ((uint64)((int64)((uint64)(va) << (64 - (bits))) >> (64 - (bits))))
 #define IS_CANONICAL_ADDRESS(va) (CANONICAL_ADDRESS(va, 48) == (uint64)(va))

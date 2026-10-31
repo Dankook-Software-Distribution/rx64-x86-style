@@ -1,9 +1,7 @@
 // x86_64: trap numbers (riscv: scause codes in riscv.h).
-// Vectors 0-31 are exceptions defined by the CPU; the names are
-// the mnemonics of Intel SDM Vol. 3A Table 6-1, as in Linux's
-// X86_TRAP_*. "err" marks the ones for which the CPU pushes an
-// error code; vectors.S pushes a fake 0 for all others.
-// Only #defines here: vectors.S includes this file too.
+// Vectors 0-31 are CPU exceptions, named as in the SDM. "err"
+// marks those with an error code; vectors.S pushes 0 for the
+// rest. Only #defines here: vectors.S includes this file too.
 
 #define T_DE     0  // divide error
 #define T_DB     1  // debug
