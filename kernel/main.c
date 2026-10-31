@@ -25,5 +25,6 @@ main()
   ioapicinit();    // I/O APIC, every pin masked
   uvm_test();      // TEST(6): user page tables
   kthread_test();  // TEST(5): two kernel threads
+  user_test();     // TEST(7-a): user processes by hand
   scheduler();
 }

@@ -13,7 +13,9 @@ struct proc proc[NPROC];
 int nextpid = 1;
 struct spinlock pid_lock;
 
+extern char trapret[];
 extern void forkret(void);
+static void freeproc(struct proc *p);
 
 // helps ensure that wakeups of wait()ing
 // parents are not lost. helps obey the
@@ -132,8 +134,6 @@ find_unused(void)
 // If found, initialize state required to run in the kernel,
 // and return with p->lock held.
 // If there are no free procs, return 0.
-// x86_64: no user page table yet; proc_pagetable() comes back
-// in step 6.
 static struct proc *
 allocproc(void)
 {
@@ -152,18 +152,78 @@ allocproc(void)
   // It belongs to the stack page, so freeproc() must not
   // kfree() it.
   p->trapframe = (struct trapframe *)(p->kstack + PGSIZE) - 1;
+  // x86_64: trapret pops every register in the trapframe into
+  // user space, so clear what the stack page held before.
+  memset(p->trapframe, 0, sizeof(*p->trapframe));
+
+  // A user page table that maps only the kernel.
+  p->pagetable = proc_pagetable(p);
+  if (p->pagetable == 0) {
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
 
   // Set up new context to start executing at forkret.
   // x86_64: swtch() enters forkret with jmp, which pushes no
   // return address, so leave an 8-byte slot below the trapframe
   // in its place. That gives rsp % 16 == 8 at function entry, as
   // the ABI expects (the trapframe is 16-byte aligned since
-  // sizeof(struct trapframe) is 176). Step 7 puts trapret's
-  // address in the slot, so forkret returns into trapret.
+  // sizeof(struct trapframe) is 176). The slot holds trapret's
+  // address, so forkret returns into trapret, which pops the
+  // trapframe and enters user space with iretq.
   memset(&p->context, 0, sizeof(p->context));
   p->context.rsp = (uint64)(p->trapframe) - 8;
+  *(uint64 *)p->context.rsp = (uint64)trapret;
   p->context.rip = (uint64)forkret;
   return p;
+}
+
+// free a proc structure and the data hanging from it,
+// including user pages.
+// p->lock must be held.
+// x86_64: riscv also kfree()s p->trapframe. Here the trapframe
+// is the top of the kernel stack page (see allocproc()), which
+// stays with the proc slot, so there is nothing to free.
+static void
+freeproc(struct proc *p)
+{
+  if (p->pagetable)
+    proc_freepagetable(p->pagetable, p->sz);
+  p->pagetable = 0;
+  p->sz = 0;
+  p->pid = 0;
+  p->name[0] = 0;
+  p->chan = 0;
+  p->killed = 0;
+  p->xstate = 0;
+  p->state = UNUSED;
+}
+
+// Create a user page table for a given process, with no user memory.
+// x86_64: riscv also maps the trampoline and trapframe pages here.
+// Neither exists: a trap enters the kernel through the IDT with
+// the user cr3 still loaded, and uvmcreate() already copies the
+// kernel half, which holds the kernel stack and its trapframe.
+pagetable_t
+proc_pagetable(struct proc *p)
+{
+  pagetable_t pagetable;
+
+  pagetable = uvmcreate();
+  if (pagetable == 0)
+    return 0;
+
+  return pagetable;
+}
+
+// Free a process's page table, and free the
+// physical memory it refers to.
+// x86_64: no trampoline or trapframe mappings to remove first.
+void
+proc_freepagetable(pagetable_t pagetable, uint64 sz)
+{
+  uvmfree(pagetable, sz);
 }
 
 // TEST(5): two kernel threads that the timer preempts.
@@ -209,6 +269,82 @@ kthread_test(void)
   }
 }
 
+// TEST(7-a): user processes made by hand, without exec. Each
+// runs the machine code below at user address 0, with one page
+// of code (read-only, executable) and one page of stack above
+// it (PTE_RW | PTE_XD). Expect "syscall 7" now and then, and for
+// syscall 1..5 one fault each from cs 0x23:
+//   1 trap e err 7  cr2 0         write to the read-only code page
+//   2 trap e err 4  cr2 100000    read an unmapped page
+//   3 trap d err 0                cli with IOPL 0
+//   4 trap d err 72 (qemu: e2)    int $14: vector 14 has DPL 0
+//   5 trap e err 15 cr2 1000      execute the XD stack page
+static uchar test_loop[] = {
+  0xb8, 0x07, 0x00, 0x00, 0x00, // 0:  mov $7, %eax
+  0xb9, 0x00, 0x00, 0x00, 0x01, //     mov $0x1000000, %ecx
+  0xff, 0xc9,                   // 1:  dec %ecx
+  0x75, 0xfc,                   //     jnz 1b
+  0xcd, 0x40,                   //     int $64
+  0xeb, 0xee,                   //     jmp 0b
+};
+static uchar test_wr[] = {
+  0xb8, 0x01, 0x00, 0x00, 0x00, 0xcd, 0x40, // mov $1, %eax; int $64
+  0xc6, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00, 0x00, // movb $0, 0
+};
+static uchar test_rd[] = {
+  0xb8, 0x02, 0x00, 0x00, 0x00, 0xcd, 0x40, // mov $2, %eax; int $64
+  0x8b, 0x04, 0x25, 0x00, 0x00, 0x10, 0x00, // mov 0x100000, %eax
+};
+static uchar test_cli[] = {
+  0xb8, 0x03, 0x00, 0x00, 0x00, 0xcd, 0x40, // mov $3, %eax; int $64
+  0xfa,                                     // cli
+};
+static uchar test_int14[] = {
+  0xb8, 0x04, 0x00, 0x00, 0x00, 0xcd, 0x40, // mov $4, %eax; int $64
+  0xcd, 0x0e,                               // int $14
+};
+static uchar test_xd[] = {
+  0xb8, 0x05, 0x00, 0x00, 0x00, 0xcd, 0x40, // mov $5, %eax; int $64
+  0xb8, 0x00, 0x10, 0x00, 0x00,             // mov $0x1000, %eax
+  0xff, 0xe0,                               // jmp *%rax
+};
+
+static void
+test_user(uchar *code, int n)
+{
+  struct proc *p;
+
+  if ((p = allocproc()) == 0)
+    panic("user_test");
+  if (uvmalloc(p->pagetable, 0, PGSIZE, 0) == 0 ||
+      uvmalloc(p->pagetable, PGSIZE, 2 * PGSIZE, PTE_RW | PTE_XD) == 0)
+    panic("user_test: uvmalloc");
+  // copyout() refuses a read-only page, so write it directly.
+  memmove(P2V(walkaddr(p->pagetable, 0)), code, n);
+  p->sz = 2 * PGSIZE;
+
+  p->trapframe->rip = 0;
+  p->trapframe->rsp = 2 * PGSIZE;
+  p->trapframe->cs = UCSEG | 3;
+  p->trapframe->ss = UDSEG | 3;
+  p->trapframe->rflags = FL_IF;
+  safestrcpy(p->name, "user_test", sizeof(p->name));
+
+  p->state = RUNNABLE;
+  release(&p->lock);
+}
+
+void
+user_test(void)
+{
+  test_user(test_loop, sizeof(test_loop));
+  test_user(test_wr, sizeof(test_wr));
+  test_user(test_rd, sizeof(test_rd));
+  test_user(test_cli, sizeof(test_cli));
+  test_user(test_int14, sizeof(test_int14));
+  test_user(test_xd, sizeof(test_xd));
+}
+
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
 // Scheduler never returns.  It loops, doing:
@@ -250,7 +386,11 @@ scheduler(void)
         // Linux does the same in __switch_to()
         // (update_task_stack()).
         c->tss.sp0 = p->kstack + PGSIZE;
+        // x86_64: switch page tables here (riscv: userret did).
+        write_cr3(V2P(p->pagetable));
         swtch(&c->context, &p->context);
+        // x86_64: back to the kernel's, so wait() can free p's.
+        kvminithart();
 
         // Don't re-enable interrupts on release.
         mycpu()->intena = 0;
@@ -314,7 +454,7 @@ yield(void)
 // will swtch to forkret.
 // x86_64: riscv jumps to userret in the trampoline here. Ours
 // just returns, into the slot allocproc() left below the
-// trapframe (trapret in step 7).
+// trapframe, which holds trapret.
 void
 forkret(void)
 {

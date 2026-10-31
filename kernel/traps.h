@@ -32,6 +32,7 @@
 // Vectors 32-255 are free for software. Device interrupts start
 // at T_IRQ0; IRQ n arrives as vector T_IRQ0 + n.
 #define T_IRQ0      32
+#define T_SYSCALL   64  // system call, int $64 (riscv: ecall)
 
 #define IRQ_TIMER    0  // LAPIC timer
 #define IRQ_COM1     4  // serial port, through the IOAPIC

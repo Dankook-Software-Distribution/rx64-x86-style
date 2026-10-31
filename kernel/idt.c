@@ -5,6 +5,7 @@
 
 #include "types.h"
 #include "x86.h"
+#include "traps.h"
 
 // a 64-bit IDT gate, 16 bytes (SDM Vol. 3A Figure 7-8). The
 // handler address is split into three pieces around the other
@@ -30,9 +31,8 @@ extern uint64 vectors[];
 // attr 0x8E is P = 1, DPL 0 and type 0xE, a 64-bit interrupt
 // gate, which clears IF on entry; a trap gate (0xF) would leave
 // interrupts on. Linux also uses interrupt gates for nearly all
-// vectors. The system call vector will need DPL 3 so that user
-// code can reach it with int; that waits until there is user
-// mode.
+// vectors. Only T_SYSCALL has DPL 3, so that user code can
+// reach it with int; trap() turns interrupts back on for it.
 void
 idtinit(void)
 {
@@ -46,6 +46,8 @@ idtinit(void)
     idt[i].offset_middle = (addr >> 16) & 0xffff;
     idt[i].offset_high   = (addr >> 32) & 0xffffffff;
   }
+
+  idt[T_SYSCALL].attr = 0xee; // P = 1, DPL 3, interrupt gate
 
   lidt(idt, sizeof(idt));
 }

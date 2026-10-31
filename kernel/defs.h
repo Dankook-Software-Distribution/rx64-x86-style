@@ -97,6 +97,7 @@ struct cpu*     mycpu(void);
 struct proc*    myproc();
 void            procinit(void);
 void            kthread_test(void); // TEST(5)
+void            user_test(void); // TEST(7-a)
 void            scheduler(void) __attribute__((noreturn));
 void            sched(void);
 void            sleep_prepare(void*);
