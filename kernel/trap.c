@@ -90,6 +90,14 @@ trap(struct trapframe *tf)
       kexit(-1);
     syscall();
     break;
+  case T_PF:
+    // x86_64: a lazily allocated user page.
+    // err bit 1 is set for a write.
+    if (user_mode(tf) &&
+        vmfault(myproc()->pagetable, myproc()->sz, read_cr2(),
+                (tf->err & 2) == 0) != 0)
+      break;
+    // fall through: a real fault.
   default:
     show_regs(tf);
     if (user_mode(tf)) {

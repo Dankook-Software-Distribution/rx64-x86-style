@@ -4,8 +4,11 @@
 // ioapicenable(). No claim/complete: the EOI goes to the LAPIC.
 
 #include "types.h"
+#include "param.h"
 #include "x86.h"
 #include "memlayout.h"
+#include "spinlock.h"
+#include "proc.h"
 #include "defs.h"
 #include "traps.h"
 
@@ -50,10 +53,10 @@ ioapicinit(void)
 // Route irq to vector T_IRQ0 + irq on cpu, edge-triggered and
 // active high as ISA devices are, and unmask it. The destination
 // goes in first so the pin is never live with a stale one.
-// cpu is the target's local APIC ID (0 with -smp 1; see step 8).
+// cpu indexes cpus[]; the entry takes that CPU's APIC ID.
 void
 ioapicenable(int irq, int cpu)
 {
-  ioapic_write(IO_APIC_REDTBL + 2 * irq + 1, cpu << 24);
+  ioapic_write(IO_APIC_REDTBL + 2 * irq + 1, cpus[cpu].apicid << 24);
   ioapic_write(IO_APIC_REDTBL + 2 * irq, T_IRQ0 + irq);
 }

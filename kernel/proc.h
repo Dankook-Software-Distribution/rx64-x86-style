@@ -27,9 +27,12 @@ struct cpu {
   // the busy TSS descriptor (riscv: no segmentation).
   uint64 gdt[NSEGS];      // This CPU's GDT, from seginit().
   struct x86_hw_tss tss;  // This CPU's TSS; sp0 is set on each switch.
+  uint8 apicid;           // x86_64: LAPIC ID, from acpiinit().
+  int started;            // x86_64: set by an AP once it runs.
 };
 
 extern struct cpu cpus[NCPU];
+extern int ncpu;
 
 // registers saved on a trap, at the top of the process's kernel
 // stack. built from the top down: the CPU pushes ss..rip (and err

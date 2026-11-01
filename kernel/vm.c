@@ -191,6 +191,22 @@ uvmcreate()
   return pagetable;
 }
 
+// x86_64: how many bytes from the start of va's hole a missing
+// page table leaves unmapped: 2MB, 1GB or 512GB. Loops over a
+// user range use it to skip holes, since a 47-bit space is too
+// big to step through a page at a time (riscv Sv39 was 256GB).
+static uint64
+holesize(pagetable_t pagetable, uint64 va)
+{
+  for (int level = 3; level > 0; level--) {
+    pte_t *pte = &pagetable[PX(level, va)];
+    if ((*pte & PTE_P) == 0)
+      return 1L << PXSHIFT(level);
+    pagetable = (pagetable_t)P2V(PTE2PA(*pte));
+  }
+  return PGSIZE;
+}
+
 // Remove npages of mappings starting from va. va must be
 // page-aligned. It's OK if the mappings don't exist.
 // Optionally free the physical memory.
@@ -204,8 +220,12 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
     panic("uvmunmap: not aligned");
 
   for (a = va; a < va + npages * PGSIZE; a += PGSIZE) {
-    if ((pte = walk(pagetable, a, 0)) == 0) // leaf page table entry allocated?
+    if ((pte = walk(pagetable, a, 0)) == 0) { // leaf page table entry allocated?
+      // x86_64: skip the rest of the hole.
+      uint64 n = holesize(pagetable, a);
+      a = (a & ~(n - 1)) + n - PGSIZE;
       continue;
+    }
     if ((*pte & PTE_P) == 0) // has physical page been allocated?
       continue;
     if (do_free) {
@@ -316,8 +336,13 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   char *mem;
 
   for (i = 0; i < sz; i += PGSIZE) {
-    if ((pte = walk(old, i, 0)) == 0)
-      continue; // page table entry hasn't been allocated
+    if ((pte = walk(old, i, 0)) == 0) {
+      // page table entry hasn't been allocated.
+      // x86_64: skip the rest of the hole.
+      uint64 n = holesize(old, i);
+      i = (i & ~(n - 1)) + n - PGSIZE;
+      continue;
+    }
     if ((*pte & PTE_P) == 0)
       continue; // physical page hasn't been allocated
     pa = PTE2PA(*pte);

@@ -7,6 +7,7 @@
 
 // x86_64: control register and EFER bits used by entry.S to turn
 // on paging and long mode (riscv: satp mode field).
+#define CR0_PE   (1L << 0)  // protected mode (entryother.S)
 #define CR0_PG   (1L << 31) // paging
 #define CR4_PAE  (1L << 5)  // physical address extension; required by long mode
 
@@ -92,6 +93,19 @@ static inline void
 outsl(uint16 port, const void *addr, int cnt)
 {
   asm volatile("cld; rep outsl" : "+S"(addr), "+c"(cnt) : "d"(port) : "memory");
+}
+
+// EBX from the CPUID instruction, as Linux's cpuid_ebx().
+// x86_64: leaf 1 gives this CPU's initial APIC ID in bits 31..24,
+// with no MMIO, so it works before paging (riscv: the hart id
+// was in tp).
+static inline uint32
+cpuid_ebx(uint32 op)
+{
+  uint32 eax = op, ebx, ecx = 0, edx;
+
+  asm volatile("cpuid" : "+a"(eax), "=b"(ebx), "+c"(ecx), "=d"(edx));
+  return ebx;
 }
 
 // load the GDT register

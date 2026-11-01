@@ -5,6 +5,7 @@
 #include "types.h"
 #include "x86.h"
 #include "traps.h"
+#include "defs.h"
 
 // a 64-bit IDT gate, 16 bytes. The handler address is split into
 // three pieces around the other fields.
@@ -25,7 +26,7 @@ static struct gate_struct idt[256];
 // handler addresses, from vectors.S.
 extern uint64 vectors[];
 
-// fill in every gate and load the IDT.
+// fill in every gate, once, and load the IDT on the boot CPU.
 // attr 0x8E is P = 1, DPL 0, 64-bit interrupt gate (clears IF).
 // Only T_SYSCALL has DPL 3, so that user code can use int.
 void
@@ -44,5 +45,13 @@ idtinit(void)
 
   idt[T_SYSCALL].attr = 0xee; // P = 1, DPL 3, interrupt gate
 
+  idtinithart();
+}
+
+// load the IDT on this CPU. The other CPUs share the boot CPU's
+// table (riscv: trapinithart() wrote stvec on each hart).
+void
+idtinithart(void)
+{
   lidt(idt, sizeof(idt));
 }

@@ -10,6 +10,9 @@ struct sleeplock;
 struct stat;
 struct superblock;
 
+// acpi.c
+void            acpiinit(void);
+
 // bio.c
 void            binit(void);
 struct buf*     bread(uint, uint);
@@ -185,6 +188,7 @@ void            earlyputc(int);
 
 // idt.c
 void            idtinit(void);
+void            idtinithart(void);
 
 // i8259.c
 void            picinit(void);
@@ -192,6 +196,7 @@ void            picinit(void);
 // lapic.c
 void            lapicinit(void);
 void            lapiceoi(void);
+void            lapicstartap(uint8, uint32);
 
 // ioapic.c
 void            ioapicinit(void);

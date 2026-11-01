@@ -62,22 +62,26 @@ procinit(void)
 // Must be called with interrupts disabled,
 // to prevent race with process being moved
 // to a different CPU.
-// x86_64: riscv read the hart id from tp. Only the boot CPU runs
-// for now; step 8 looks the CPU up by its LAPIC ID.
 int
 cpuid()
 {
-  return 0;
+  return mycpu() - cpus;
 }
 
 // Return this CPU's cpu struct.
 // Interrupts must be disabled.
+// x86_64: riscv read the hart id from tp. Look the CPU up by its
+// APIC ID instead; without swapgs, GS cannot hold it safely.
 struct cpu *
 mycpu(void)
 {
-  int id = cpuid();
-  struct cpu *c = &cpus[id];
-  return c;
+  uint8 apicid = cpuid_ebx(1) >> 24;
+
+  for (int i = 0; i < ncpu; i++)
+    if (cpus[i].apicid == apicid)
+      return &cpus[i];
+  // before acpiinit() fills cpus[], only the boot CPU runs.
+  return &cpus[0];
 }
 
 struct proc *

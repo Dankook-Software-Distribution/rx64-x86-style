@@ -5,7 +5,9 @@ U=user
 # is ported, so the kernel builds and boots at every step.
 OBJS = \
   $K/entry.o \
+  $K/entryother.o \
   $K/main.o \
+  $K/acpi.o \
   $K/gdt.o \
   $K/early.o \
   $K/idt.o \
@@ -121,8 +123,6 @@ mkfs/mkfs: mkfs/mkfs.c $K/fs.h $K/param.h
 # http://www.gnu.org/software/make/manual/html_node/Chained-Rules.html
 .PRECIOUS: %.o
 
-# x86_64: _usertests (after _stressfs) waits for 8-c; it still
-# uses riscv addresses such as TRAPFRAME.
 UPROGS=\
 	$U/_cat\
 	$U/_echo\
@@ -136,6 +136,7 @@ UPROGS=\
 	$U/_rm\
 	$U/_sh\
 	$U/_stressfs\
+	$U/_usertests\
 	$U/_grind\
 	$U/_wc\
 	$U/_zombie\
@@ -163,7 +164,7 @@ QEMUGDB = $(shell if $(QEMU) -help | grep -q '^-gdb'; \
 	then echo "-gdb tcp::$(GDBPORT)"; \
 	else echo "-s -p $(GDBPORT)"; fi)
 ifndef CPUS
-CPUS := 1
+CPUS := 3
 endif
 
 # x86_64: pc machine, Multiboot load via -kernel, COM1 on stdio.

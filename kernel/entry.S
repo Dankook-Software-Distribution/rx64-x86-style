@@ -122,6 +122,7 @@ bootstacktop:
         # In .data, not .bss: Multiboot loads only up to edata.
         .data
         .balign 4096
+.globl pml4                             # entryother.S uses it too
 pml4:
         .quad V2P_WO(pdpt) + PTE_P + PTE_RW     # [0]   VA 0 .. 512GB
         .space (511 - 1) * 8                    # [1..510] not present

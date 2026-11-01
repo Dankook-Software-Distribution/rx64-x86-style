@@ -34,6 +34,10 @@
 #define IDE_BASE  0x1F0
 #define IDE_CTL   0x3F6 // device control; bit 1 (nIEN) masks IRQ 14
 
+// x86_64: startothers() copies entryother.S here. An AP starts in
+// real mode, so it must be below 1MB and page-aligned (SIPI).
+#define ENTRYOTHER 0x7000
+
 // ---------------------------------------------------------------
 // Physical <-> kernel virtual conversion
 //
