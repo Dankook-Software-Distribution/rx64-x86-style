@@ -9,8 +9,7 @@
 
 static char digits[] = "0123456789abcdef";
 
-// print one character. Takes an int like consputc(), so that
-// printk.c can use it in consputc()'s place for now.
+// print one character.
 void
 earlyputc(int c)
 {

@@ -32,6 +32,7 @@
 // x86_64: I/O ports, not MMIO (riscv: UART0, VIRTIO0).
 #define COM1      0x3F8
 #define IDE_BASE  0x1F0
+#define IDE_CTL   0x3F6 // device control; bit 1 (nIEN) masks IRQ 14
 
 // ---------------------------------------------------------------
 // Physical <-> kernel virtual conversion

@@ -71,6 +71,29 @@ outb(uint16 port, uint8 data)
   asm volatile("outb %0, %1" : : "a"(data), "Nd"(port));
 }
 
+// read a byte from an I/O port
+static inline uint8
+inb(uint16 port)
+{
+  uint8 x;
+  asm volatile("inb %1, %0" : "=a"(x) : "Nd"(port));
+  return x;
+}
+
+// read cnt 4-byte words from an I/O port into addr
+static inline void
+insl(uint16 port, void *addr, int cnt)
+{
+  asm volatile("cld; rep insl" : "+D"(addr), "+c"(cnt) : "d"(port) : "memory");
+}
+
+// write cnt 4-byte words from addr to an I/O port
+static inline void
+outsl(uint16 port, const void *addr, int cnt)
+{
+  asm volatile("cld; rep outsl" : "+S"(addr), "+c"(cnt) : "d"(port) : "memory");
+}
+
 // load the GDT register
 // x86_64: riscv has no segmentation. lgdt reads a 10-byte
 // limit-and-base operand, hence packed.

@@ -17,7 +17,7 @@
 #include "param.h"
 #include "spinlock.h"
 #include "sleeplock.h"
-#include "riscv.h"
+#include "x86.h"
 #include "defs.h"
 #include "fs.h"
 #include "buf.h"
@@ -95,7 +95,7 @@ bread(uint dev, uint blockno)
 
   b = bget(dev, blockno);
   if (!b->valid) {
-    virtio_disk_rw(b, 0);
+    iderw(b, 0); // x86_64: IDE PIO (riscv: virtio_disk_rw)
     b->valid = 1;
   }
   return b;
@@ -108,7 +108,7 @@ bwrite(struct buf *b)
 {
   if (!holdingsleep(&b->lock))
     panic("bwrite");
-  virtio_disk_rw(b, 1);
+  iderw(b, 1); // x86_64: IDE PIO (riscv: virtio_disk_rw)
 }
 
 // Release a locked buffer.

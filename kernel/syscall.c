@@ -1,7 +1,7 @@
 #include "types.h"
 #include "param.h"
+#include "x86.h"
 #include "memlayout.h"
-#include "riscv.h"
 #include "spinlock.h"
 #include "proc.h"
 #include "syscall.h"
@@ -35,19 +35,21 @@ static uint64
 argraw(int n)
 {
   struct proc *p = myproc();
+  // x86_64: rdi rsi rdx r10 r8 r9, as Linux (riscv: a0..a5);
+  // r10, not rcx, since the syscall instruction clobbers rcx.
   switch (n) {
   case 0:
-    return p->trapframe->a0;
+    return p->trapframe->rdi;
   case 1:
-    return p->trapframe->a1;
+    return p->trapframe->rsi;
   case 2:
-    return p->trapframe->a2;
+    return p->trapframe->rdx;
   case 3:
-    return p->trapframe->a3;
+    return p->trapframe->r10;
   case 4:
-    return p->trapframe->a4;
+    return p->trapframe->r8;
   case 5:
-    return p->trapframe->a5;
+    return p->trapframe->r9;
   }
   panic("argraw");
   return -1;
@@ -84,17 +86,17 @@ argstr(int n, char *buf, int max)
 extern uint64 sys_fork(void);
 extern uint64 sys_exit(void);
 extern uint64 sys_wait(void);
-extern uint64 sys_pipe(void);
-extern uint64 sys_read(void);
 extern uint64 sys_kill(void);
-extern uint64 sys_exec(void);
-extern uint64 sys_fstat(void);
-extern uint64 sys_chdir(void);
-extern uint64 sys_dup(void);
 extern uint64 sys_getpid(void);
 extern uint64 sys_sbrk(void);
 extern uint64 sys_pause(void);
 extern uint64 sys_uptime(void);
+extern uint64 sys_pipe(void);
+extern uint64 sys_read(void);
+extern uint64 sys_exec(void);
+extern uint64 sys_fstat(void);
+extern uint64 sys_chdir(void);
+extern uint64 sys_dup(void);
 extern uint64 sys_open(void);
 extern uint64 sys_write(void);
 extern uint64 sys_mknod(void);
@@ -139,13 +141,14 @@ syscall(void)
   int num;
   struct proc *p = myproc();
 
-  num = p->trapframe->a7;
+  // x86_64: number and return value in rax (riscv: a7 and a0).
+  num = p->trapframe->rax;
   if (num > 0 && num < NELEM(syscalls) && syscalls[num]) {
     // Use num to lookup the system call function for num, call it,
-    // and store its return value in p->trapframe->a0
-    p->trapframe->a0 = syscalls[num]();
+    // and store its return value in p->trapframe->rax
+    p->trapframe->rax = syscalls[num]();
   } else {
     printk("%d %s: unknown sys call %d\n", p->pid, p->name, num);
-    p->trapframe->a0 = -1;
+    p->trapframe->rax = -1;
   }
 }

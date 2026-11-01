@@ -1,5 +1,5 @@
 #include "types.h"
-#include "riscv.h"
+#include "x86.h"
 #include "defs.h"
 #include "param.h"
 #include "memlayout.h"
@@ -57,7 +57,7 @@ sys_sbrk(void)
     // memory, vmfault() will allocate it.
     if (addr + n < addr)
       return -1;
-    if (addr + n > TRAPFRAME)
+    if (addr + n > USERTOP) // x86_64: riscv TRAPFRAME
       return -1;
     myproc()->sz += n;
   }

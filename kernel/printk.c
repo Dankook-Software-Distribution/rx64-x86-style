@@ -15,9 +15,6 @@
 #include "defs.h"
 #include "proc.h"
 
-// x86_64: print through early.c until console.c is ported (7-g).
-#define consputc earlyputc
-
 volatile int panicking = 0; // printing a panic message
 volatile int panicked = 0;  // spinning forever at end of a panic
 

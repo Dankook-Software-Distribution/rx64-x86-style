@@ -21,7 +21,20 @@ OBJS = \
   $K/i8259.o \
   $K/lapic.o \
   $K/ioapic.o \
-  $K/swtch.o
+  $K/swtch.o \
+  $K/syscall.o \
+  $K/sysproc.o \
+  $K/ide.o \
+  $K/sleeplock.o \
+  $K/bio.o \
+  $K/log.o \
+  $K/fs.o \
+  $K/file.o \
+  $K/pipe.o \
+  $K/sysfile.o \
+  $K/exec.o \
+  $K/uart.o \
+  $K/console.o
 
 # x86_64: the host gcc/binutils target x86_64 already, so no
 # cross-compiler prefix is needed (riscv searched for riscv64-*-).
@@ -90,9 +103,6 @@ _%: %.o $(ULIB) $U/user.ld
 	$(OBJDUMP) -S $@ > $*.asm
 	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $*.sym
 
-$U/usys.S : $U/usys.pl
-	perl $U/usys.pl > $U/usys.S
-
 $U/usys.o : $U/usys.S
 	$(CC) $(CFLAGS) -c -o $U/usys.o $U/usys.S
 
@@ -111,6 +121,8 @@ mkfs/mkfs: mkfs/mkfs.c $K/fs.h $K/param.h
 # http://www.gnu.org/software/make/manual/html_node/Chained-Rules.html
 .PRECIOUS: %.o
 
+# x86_64: _usertests (after _stressfs) waits for 8-c; it still
+# uses riscv addresses such as TRAPFRAME.
 UPROGS=\
 	$U/_cat\
 	$U/_echo\
@@ -124,7 +136,6 @@ UPROGS=\
 	$U/_rm\
 	$U/_sh\
 	$U/_stressfs\
-	$U/_usertests\
 	$U/_grind\
 	$U/_wc\
 	$U/_zombie\
@@ -143,7 +154,6 @@ clean:
 	*/*.o */*.d */*.asm */*.sym \
 	$K/kernel fs.img \
 	mkfs/mkfs .gdbinit \
-        $U/usys.S \
 	$(UPROGS)
 
 # try to generate a unique GDB port
@@ -161,15 +171,16 @@ endif
 # the log goes to qemu.log, since it dumps every interrupt.
 QEMUOPTS = -machine pc -kernel $K/kernel -m 128M -smp $(CPUS) -nographic
 QEMUOPTS += -serial mon:stdio
+QEMUOPTS += -drive file=fs.img,if=ide,index=0,media=disk,format=raw
 QEMUOPTS += -d int,cpu_reset -D qemu.log -no-reboot -no-shutdown
 
-qemu: check-qemu-version $K/kernel
+qemu: check-qemu-version $K/kernel fs.img
 	$(QEMU) $(QEMUOPTS)
 
 .gdbinit: .gdbinit.tmpl-riscv
 	sed "s/:1234/:$(GDBPORT)/" < $^ > $@
 
-qemu-gdb: $K/kernel .gdbinit
+qemu-gdb: $K/kernel .gdbinit fs.img
 	@echo "*** Now run 'gdb' in another window." 1>&2
 	$(QEMU) $(QEMUOPTS) -S $(QEMUGDB)
 

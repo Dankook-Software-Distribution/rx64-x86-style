@@ -5,38 +5,43 @@
 #include "types.h"
 #include "param.h"
 #include "memlayout.h"
-#include "riscv.h"
+#include "x86.h"
+#include "traps.h"
 #include "spinlock.h"
 #include "sleeplock.h"
 #include "proc.h"
 #include "defs.h"
 
-// the UART control registers are memory-mapped
-// at address UART0. this macro returns the
-// address of one of the registers.
-#define Reg(reg) ((volatile unsigned char *)(UART0 + (reg)))
+// x86_64: COM1's registers are I/O ports (riscv: memory-mapped
+// at UART0), reached with inb/outb.
+#define ReadReg(reg)     inb(COM1 + (reg))
+#define WriteReg(reg, v) outb(COM1 + (reg), (v))
 
-#define ReadReg(reg)     (*(Reg(reg)))
-#define WriteReg(reg, v) (*(Reg(reg)) = (v))
-
-// the UART control registers.
+// the UART control registers, named as in Linux
+// include/uapi/linux/serial_reg.h.
 // some have different meanings for read vs write.
-// see http://byterunner.com/16550.html
-#define RHR             0        // receive holding register (for input bytes)
-#define THR             0        // transmit holding register (for output bytes)
-#define IER             1        // interrupt enable register
-#define IER_RX_ENABLE   (1 << 0) // receiver interrupts
-#define IER_TX_ENABLE   (1 << 1) // transmit interrupts
-#define FCR             2        // FIFO control register
-#define FCR_FIFO_ENABLE (1 << 0)
-#define FCR_FIFO_CLEAR  (3 << 1) // clear the content of the two FIFOs
-#define ISR             2        // interrupt status register
-#define LCR             3        // line control register
-#define LCR_EIGHT_BITS  (3 << 0)
-#define LCR_BAUD_LATCH  (1 << 7) // special mode to set baud rate
-#define LSR             5        // line status register
-#define LSR_RX_READY    (1 << 0) // input is waiting to be read from RHR
-#define LSR_TX_IDLE     (1 << 5) // THR can accept another character to send
+#define UART_RX       0    // receive buffer (read)
+#define UART_TX       0    // transmit holding (write)
+#define UART_DLL      0    // divisor latch low (with DLAB)
+#define UART_DLM      1    // divisor latch high (with DLAB)
+#define UART_IER      1    // interrupt enable
+#define UART_IER_RDI  0x01 // receiver data interrupt
+#define UART_IER_THRI 0x02 // transmit holding register empty
+#define UART_IIR      2    // interrupt identification (read)
+#define UART_FCR      2    // FIFO control (write)
+#define UART_FCR_ENABLE_FIFO 0x01
+#define UART_FCR_CLEAR_RCVR  0x02
+#define UART_FCR_CLEAR_XMIT  0x04
+#define UART_LCR      3    // line control
+#define UART_LCR_WLEN8 0x03 // 8 data bits
+#define UART_LCR_DLAB 0x80 // divisor latch access
+#define UART_MCR      4    // modem control
+#define UART_MCR_DTR  0x01
+#define UART_MCR_RTS  0x02
+#define UART_MCR_OUT2 0x08 // PC wiring: gates the IRQ line
+#define UART_LSR      5    // line status
+#define UART_LSR_DR   0x01 // data ready
+#define UART_LSR_THRE 0x20 // transmit holding register empty
 
 // for sending threads to serialize their writes
 static struct sleeplock tx_lock;
@@ -49,28 +54,36 @@ void
 uartinit(void)
 {
   // disable interrupts.
-  WriteReg(IER, 0x00);
+  WriteReg(UART_IER, 0x00);
 
   // special mode to set baud rate.
-  WriteReg(LCR, LCR_BAUD_LATCH);
+  WriteReg(UART_LCR, UART_LCR_DLAB);
 
   // LSB for baud rate of 38.4K.
-  WriteReg(0, 0x03);
+  WriteReg(UART_DLL, 0x03);
 
   // MSB for baud rate of 38.4K.
-  WriteReg(1, 0x00);
+  WriteReg(UART_DLM, 0x00);
 
   // leave set-baud mode,
   // and set word length to 8 bits, no parity.
-  WriteReg(LCR, LCR_EIGHT_BITS);
+  WriteReg(UART_LCR, UART_LCR_WLEN8);
 
   // reset and enable FIFOs.
-  WriteReg(FCR, FCR_FIFO_ENABLE | FCR_FIFO_CLEAR);
+  WriteReg(UART_FCR, UART_FCR_ENABLE_FIFO | UART_FCR_CLEAR_RCVR |
+                       UART_FCR_CLEAR_XMIT);
+
+  // x86_64: on a PC, OUT2 connects the UART's interrupt to the
+  // interrupt controller (riscv's UART had no such gate).
+  WriteReg(UART_MCR, UART_MCR_DTR | UART_MCR_RTS | UART_MCR_OUT2);
 
   // enable transmit and receive interrupts.
-  WriteReg(IER, IER_TX_ENABLE | IER_RX_ENABLE);
+  WriteReg(UART_IER, UART_IER_THRI | UART_IER_RDI);
 
   initsleeplock(&tx_lock, "uart");
+
+  // x86_64: route IRQ 4 to CPU 0 (riscv: the PLIC, in plicinit()).
+  ioapicenable(IRQ_COM1, 0);
 }
 
 // transmit buf[] to the uart. it blocks if the
@@ -84,8 +97,8 @@ uartwrite(char buf[], int n)
   int i = 0;
   while (i < n) {
     sleep_prepare(&tx_chan);
-    if (ReadReg(LSR) & LSR_TX_IDLE) {
-      WriteReg(THR, buf[i]);
+    if (ReadReg(UART_LSR) & UART_LSR_THRE) {
+      WriteReg(UART_TX, buf[i]);
       i += 1;
     } else {
       sleep();
@@ -111,9 +124,9 @@ uartputc_sync(int c)
   }
 
   // wait for UART to set Transmit Holding Empty in LSR.
-  while ((ReadReg(LSR) & LSR_TX_IDLE) == 0)
+  while ((ReadReg(UART_LSR) & UART_LSR_THRE) == 0)
     ;
-  WriteReg(THR, c);
+  WriteReg(UART_TX, c);
 
   if (panicking == 0)
     pop_off();
@@ -125,8 +138,8 @@ static int
 uartgetc(void)
 {
   // is input ready?
-  if (ReadReg(LSR) & LSR_RX_READY) {
-    return ReadReg(RHR);
+  if (ReadReg(UART_LSR) & UART_LSR_DR) {
+    return ReadReg(UART_RX);
   } else {
     return -1;
   }
@@ -134,13 +147,13 @@ uartgetc(void)
 
 // handle a uart interrupt, raised because input has
 // arrived, or the uart is ready for more output, or
-// both. called from devintr().
+// both. called from trap().
 void
 uartintr(void)
 {
-  ReadReg(ISR); // acknowledge the interrupt
+  ReadReg(UART_IIR); // acknowledge the interrupt
 
-  if (ReadReg(LSR) & LSR_TX_IDLE) {
+  if (ReadReg(UART_LSR) & UART_LSR_THRE) {
     // UART finished transmitting; wake up sending thread.
     wakeup(&tx_chan);
   }

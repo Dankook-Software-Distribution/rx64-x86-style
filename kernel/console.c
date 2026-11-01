@@ -18,7 +18,7 @@
 #include "fs.h"
 #include "file.h"
 #include "memlayout.h"
-#include "riscv.h"
+#include "x86.h"
 #include "defs.h"
 #include "proc.h"
 

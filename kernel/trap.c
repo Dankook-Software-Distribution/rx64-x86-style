@@ -75,27 +75,36 @@ trap(struct trapframe *tf)
   case T_IRQ0 + IRQ_TIMER:
     timerintr();
     break;
+  case T_IRQ0 + IRQ_IDE:
+    ideintr();
+    lapiceoi();
+    break;
+  case T_IRQ0 + IRQ_COM1:
+    uartintr();
+    lapiceoi();
+    break;
   case T_SYSCALL:
     // the interrupt gate turned interrupts off.
     intr_on();
-    // TEST(7-a): syscall() comes in 7-b. The CPU must have built
-    // the frame at TSS sp0, which is where allocproc() put it.
-    printk("syscall %ld\n", tf->rax);
-    if (tf != myproc()->trapframe)
-      panic("trap: tf != p->trapframe");
+    if (killed(myproc()))
+      kexit(-1);
+    syscall();
     break;
   default:
     show_regs(tf);
     if (user_mode(tf)) {
-      // TEST(7-a): stop only this process until kexit() in 7-c.
-      // Not UNUSED: we are still on its kernel stack.
+      // a fault in user code kills only that process.
       struct proc *p = myproc();
-      acquire(&p->lock);
-      p->state = ZOMBIE;
-      sched();
+      printk("pid %d %s: killed\n", p->pid, p->name);
+      setkilled(p);
+      break;
+    } else {
+      for (;;) ;
     }
-    for (;;) ;
   }
+
+  if (user_mode(tf) && killed(myproc()))
+    kexit(-1);
   // give up the CPU if this is a timer interrupt.
   // x86_64: myproc() is 0 if it came in scheduler()'s safe_halt().
   if (myproc() != 0 && tf->trapno == T_IRQ0 + IRQ_TIMER)

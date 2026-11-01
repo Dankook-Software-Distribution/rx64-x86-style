@@ -23,6 +23,11 @@ main()
   picinit();       // mask the legacy 8259 PICs
   lapicinit();     // local APIC and its timer
   ioapicinit();    // I/O APIC, every pin masked
-  user_test();     // TEST(7-a): user processes by hand
+  consoleinit();   // COM1 console; after ioapicinit for IRQ 4
+  binit();         // buffer cache
+  iinit();         // inode table
+  fileinit();      // file table
+  ideinit();       // IDE disk
+  userinit();      // first user process
   scheduler();
 }

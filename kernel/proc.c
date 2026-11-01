@@ -10,6 +10,8 @@ struct cpu cpus[NCPU];
 
 struct proc proc[NPROC];
 
+struct proc *initproc;
+
 int nextpid = 1;
 struct spinlock pid_lock;
 
@@ -201,80 +203,213 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
   uvmfree(pagetable, sz);
 }
 
-// TEST(7-a): user processes made by hand, without exec. Each
-// runs the machine code below at user address 0, with one page
-// of code (read-only, executable) and one page of stack above
-// it (PTE_RW | PTE_XD). Expect "syscall 7" now and then, and for
-// syscall 1..5 one fault each from cs 0x23:
-//   1 trap e err 7  cr2 0         write to the read-only code page
-//   2 trap e err 4  cr2 100000    read an unmapped page
-//   3 trap d err 0                cli with IOPL 0
-//   4 trap d err 72 (qemu: e2)    int $14: vector 14 has DPL 0
-//   5 trap e err 15 cr2 1000      execute the XD stack page
-static uchar test_loop[] = {
-  0xb8, 0x07, 0x00, 0x00, 0x00, // 0:  mov $7, %eax
-  0xb9, 0x00, 0x00, 0x00, 0x01, //     mov $0x1000000, %ecx
-  0xff, 0xc9,                   // 1:  dec %ecx
-  0x75, 0xfc,                   //     jnz 1b
-  0xcd, 0x40,                   //     int $64
-  0xeb, 0xee,                   //     jmp 0b
-};
-static uchar test_wr[] = {
-  0xb8, 0x01, 0x00, 0x00, 0x00, 0xcd, 0x40, // mov $1, %eax; int $64
-  0xc6, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00, 0x00, // movb $0, 0
-};
-static uchar test_rd[] = {
-  0xb8, 0x02, 0x00, 0x00, 0x00, 0xcd, 0x40, // mov $2, %eax; int $64
-  0x8b, 0x04, 0x25, 0x00, 0x00, 0x10, 0x00, // mov 0x100000, %eax
-};
-static uchar test_cli[] = {
-  0xb8, 0x03, 0x00, 0x00, 0x00, 0xcd, 0x40, // mov $3, %eax; int $64
-  0xfa,                                     // cli
-};
-static uchar test_int14[] = {
-  0xb8, 0x04, 0x00, 0x00, 0x00, 0xcd, 0x40, // mov $4, %eax; int $64
-  0xcd, 0x0e,                               // int $14
-};
-static uchar test_xd[] = {
-  0xb8, 0x05, 0x00, 0x00, 0x00, 0xcd, 0x40, // mov $5, %eax; int $64
-  0xb8, 0x00, 0x10, 0x00, 0x00,             // mov $0x1000, %eax
-  0xff, 0xe0,                               // jmp *%rax
-};
-
-static void
-test_user(uchar *code, int n)
+// Set up first user process.
+// x86_64: as riscv, no initcode; forkret() execs /init from disk.
+void
+userinit(void)
 {
   struct proc *p;
 
-  if ((p = allocproc()) == 0)
-    panic("user_test");
-  if (uvmalloc(p->pagetable, 0, PGSIZE, 0) == 0 ||
-      uvmalloc(p->pagetable, PGSIZE, 2 * PGSIZE, PTE_RW | PTE_XD) == 0)
-    panic("user_test: uvmalloc");
-  // copyout() refuses a read-only page, so write it directly.
-  memmove(P2V(walkaddr(p->pagetable, 0)), code, n);
-  p->sz = 2 * PGSIZE;
+  p = allocproc();
+  initproc = p;
 
-  p->trapframe->rip = 0;
-  p->trapframe->rsp = 2 * PGSIZE;
-  p->trapframe->cs = UCSEG | 3;
-  p->trapframe->ss = UDSEG | 3;
-  p->trapframe->rflags = FL_IF;
-  safestrcpy(p->name, "user_test", sizeof(p->name));
+  p->cwd = namei("/");
 
   p->state = RUNNABLE;
+
   release(&p->lock);
 }
 
-void
-user_test(void)
+// Grow or shrink user memory by n bytes.
+// Return 0 on success, -1 on failure.
+int
+growproc(int n)
 {
-  test_user(test_loop, sizeof(test_loop));
-  test_user(test_wr, sizeof(test_wr));
-  test_user(test_rd, sizeof(test_rd));
-  test_user(test_cli, sizeof(test_cli));
-  test_user(test_int14, sizeof(test_int14));
-  test_user(test_xd, sizeof(test_xd));
+  uint64 sz;
+  struct proc *p = myproc();
+
+  sz = p->sz;
+  if (n > 0) {
+    if (sz + n > USERTOP) { // x86_64: riscv TRAPFRAME
+      return -1;
+    }
+    if ((sz = uvmalloc(p->pagetable, sz, sz + n, PTE_RW | PTE_XD)) == 0) {
+      return -1;
+    }
+  } else if (n < 0) {
+    sz = uvmdealloc(p->pagetable, sz, sz + n);
+    // x86_64: reload cr3 to drop stale TLB entries (riscv:
+    // userret's sfence.vma did it on every return).
+    write_cr3(V2P(p->pagetable));
+  }
+  p->sz = sz;
+  return 0;
+}
+
+// Create a new process, copying the parent.
+// Sets up child kernel stack to return as if from fork() system call.
+int
+kfork(void)
+{
+  int pid;
+  struct proc *np;
+  struct proc *p = myproc();
+
+  // Allocate process.
+  if ((np = allocproc()) == 0) {
+    return -1;
+  }
+
+  // Copy user memory from parent to child.
+  if (uvmcopy(p->pagetable, np->pagetable, p->sz) < 0) {
+    freeproc(np);
+    release(&np->lock);
+    return -1;
+  }
+  np->sz = p->sz;
+
+  // copy saved user registers.
+  *(np->trapframe) = *(p->trapframe);
+
+  // Cause fork to return 0 in the child.
+  // x86_64: rax (riscv: a0). The frame holds only user state.
+  np->trapframe->rax = 0;
+
+  // increment reference counts on open file descriptors.
+  for (int i = 0; i < NOFILE; i++)
+    if (p->ofile[i])
+      np->ofile[i] = filedup(p->ofile[i]);
+  np->cwd = idup(p->cwd);
+
+  safestrcpy(np->name, p->name, sizeof(p->name));
+
+  pid = np->pid;
+
+  release(&np->lock);
+
+  acquire(&wait_lock);
+  np->parent = p;
+  release(&wait_lock);
+
+  acquire(&np->lock);
+  np->state = RUNNABLE;
+  release(&np->lock);
+
+  return pid;
+}
+
+// Pass p's abandoned children to init.
+// Caller must hold wait_lock.
+void
+reparent(struct proc *p)
+{
+  struct proc *pp;
+
+  for (pp = proc; pp < &proc[NPROC]; pp++) {
+    if (pp->parent == p) {
+      pp->parent = initproc;
+      wakeup(initproc);
+    }
+  }
+}
+
+// Exit the current process.  Does not return.
+// An exited process remains in the zombie state
+// until its parent calls wait().
+void
+kexit(int status)
+{
+  struct proc *p = myproc();
+
+  if (p == initproc)
+    panic("init exiting");
+
+  // Close all open files.
+  for (int fd = 0; fd < NOFILE; fd++) {
+    if (p->ofile[fd]) {
+      struct file *f = p->ofile[fd];
+      fileclose(f);
+      p->ofile[fd] = 0;
+    }
+  }
+
+  begin_op();
+  iput(p->cwd);
+  end_op();
+  p->cwd = 0;
+
+  acquire(&wait_lock);
+
+  // Give any children to init.
+  reparent(p);
+
+  // Parent might be sleeping in wait().
+  wakeup(p->parent);
+
+  acquire(&p->lock);
+
+  p->xstate = status;
+  p->state = ZOMBIE;
+
+  release(&wait_lock);
+
+  // Jump into the scheduler, never to return.
+  sched();
+  panic("zombie exit");
+}
+
+// Wait for a child process to exit and return its pid.
+// Return -1 if this process has no children.
+int
+kwait(uint64 addr)
+{
+  struct proc *pp;
+  int havekids, pid;
+  struct proc *p = myproc();
+
+  acquire(&wait_lock);
+
+  for (;;) {
+    // Scan through table looking for exited children.
+    havekids = 0;
+    for (pp = proc; pp < &proc[NPROC]; pp++) {
+      if (pp->parent == p) {
+        // make sure the child isn't still in exit() or swtch().
+        acquire(&pp->lock);
+
+        havekids = 1;
+        if (pp->state == ZOMBIE) {
+          // Found one.
+          pid = pp->pid;
+          if (addr != 0 &&
+              copyout(p->pagetable, p->sz, addr, (char *)&pp->xstate,
+                      sizeof(pp->xstate)) < 0) {
+            release(&pp->lock);
+            release(&wait_lock);
+            return -1;
+          }
+          pp->parent = 0;
+          freeproc(pp);
+          release(&pp->lock);
+          release(&wait_lock);
+          return pid;
+        }
+        release(&pp->lock);
+      }
+    }
+
+    // No point waiting if we don't have any children.
+    if (!havekids || killed(p)) {
+      release(&wait_lock);
+      return -1;
+    }
+
+    // Wait for a child to exit.
+    sleep_prepare(p); //DOC: wait-sleep
+    release(&wait_lock);
+    sleep();
+    acquire(&wait_lock);
+  }
 }
 
 // Per-CPU process scheduler.
@@ -384,6 +519,21 @@ forkret(void)
 
   // Still holding p->lock from scheduler.
   release(&p->lock);
+
+  static int first = 1;
+  if (first) {
+    first = 0;
+
+    // File system initialization must be run in the context of a
+    // regular process (e.g., because it calls sleep), and thus cannot
+    // be run from main().
+    fsinit(ROOTDEV);
+
+    // We can invoke kexec() now that file system is initialized.
+    // x86_64: kexec() sets rdi to argc itself (riscv: a0 = kexec()).
+    if (kexec("/init", (char *[]){"/init", 0}) < 0)
+      panic("exec");
+  }
 }
 
 // Register current process as waiting for wakeups on chan.
@@ -435,5 +585,113 @@ wakeup(void *chan)
       }
     }
     release(&p->lock);
+  }
+}
+
+// Kill the process with the given pid.
+// The victim won't exit until it tries to return
+// to user space (see usertrap() in trap.c).
+int
+kkill(int pid)
+{
+  struct proc *p;
+
+  if (pid == 0)
+    return -1;
+
+  for (p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if (p->pid == pid) {
+      p->killed = 1;
+      if (p->state == SLEEPING) {
+        // Wake process from sleep().
+        p->state = RUNNABLE;
+      }
+      release(&p->lock);
+      return 0;
+    }
+    release(&p->lock);
+  }
+  return -1;
+}
+
+void
+setkilled(struct proc *p)
+{
+  acquire(&p->lock);
+  p->killed = 1;
+  release(&p->lock);
+}
+
+int
+killed(struct proc *p)
+{
+  int k;
+
+  acquire(&p->lock);
+  k = p->killed;
+  release(&p->lock);
+  return k;
+}
+
+// Copy to either a user address, or kernel address,
+// depending on usr_dst.
+// Returns 0 on success, -1 on error.
+int
+either_copyout(int user_dst, uint64 dst, void *src, uint64 len)
+{
+  struct proc *p = myproc();
+  if (user_dst) {
+    return copyout(p->pagetable, p->sz, dst, src, len);
+  } else {
+    memmove((char *)dst, src, len);
+    return 0;
+  }
+}
+
+// Copy from either a user address, or kernel address,
+// depending on usr_src.
+// Returns 0 on success, -1 on error.
+int
+either_copyin(void *dst, int user_src, uint64 src, uint64 len)
+{
+  struct proc *p = myproc();
+  if (user_src) {
+    return copyin(p->pagetable, p->sz, dst, src, len);
+  } else {
+    memmove(dst, (char *)src, len);
+    return 0;
+  }
+}
+
+// Print a process listing to console.  For debugging.
+// Runs when user types ^P on console.
+// No lock to avoid wedging a stuck machine further.
+void
+procdump(void)
+{
+  static char *states[] = {
+    // clang-format off
+    [UNUSED]    = "unused",
+    [USED]      = "used",
+    [SLEEPING]  = "sleep ",
+    [RUNNABLE]  = "runble",
+    [RUNNING]   = "run   ",
+    [ZOMBIE]    = "zombie"
+    // clang-format on
+  };
+  struct proc *p;
+  char *state;
+
+  printk("\n");
+  for (p = proc; p < &proc[NPROC]; p++) {
+    if (p->state == UNUSED)
+      continue;
+    if (p->state >= 0 && p->state < NELEM(states) && states[p->state])
+      state = states[p->state];
+    else
+      state = "???";
+    printk("%d %s %s", p->pid, state, p->name);
+    printk("\n");
   }
 }

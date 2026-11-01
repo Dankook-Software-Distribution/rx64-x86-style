@@ -1,7 +1,7 @@
 // Sleeping locks
 
 #include "types.h"
-#include "riscv.h"
+#include "x86.h"
 #include "defs.h"
 #include "param.h"
 #include "memlayout.h"

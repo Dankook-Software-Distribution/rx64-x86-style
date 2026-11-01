@@ -1,4 +1,4 @@
-OUTPUT_ARCH( "riscv" )
+OUTPUT_ARCH( "i386:x86-64" )
 
 SECTIONS
 {

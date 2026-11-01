@@ -95,7 +95,6 @@ void            setkilled(struct proc*);
 struct cpu*     mycpu(void);
 struct proc*    myproc();
 void            procinit(void);
-void            user_test(void); // TEST(7-a)
 void            scheduler(void) __attribute__((noreturn));
 void            sched(void);
 void            sleep_prepare(void*);
@@ -145,7 +144,6 @@ void            syscall();
 // trap.c
 extern uint     ticks;
 void            trapinit(void);
-void            trapinithart(void);
 extern struct spinlock tickslock;
 void            prepare_return(void);
 
@@ -175,16 +173,10 @@ int             copyinstr(pagetable_t, uint64, char *, uint64, uint64);
 int             ismapped(pagetable_t, uint64);
 uint64          vmfault(pagetable_t, uint64, uint64, int);
 
-// plic.c
-void            plicinit(void);
-void            plicinithart(void);
-int             plic_claim(void);
-void            plic_complete(int);
-
-// virtio_disk.c
-void            virtio_disk_init(void);
-void            virtio_disk_rw(struct buf *, int);
-void            virtio_disk_intr(void);
+// ide.c
+void            ideinit(void);
+void            iderw(struct buf *, int);
+void            ideintr(void);
 
 // early.c
 void            earlyputs(char *);
