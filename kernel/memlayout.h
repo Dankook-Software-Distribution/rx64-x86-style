@@ -7,13 +7,14 @@
 // Needs PGSIZE and MAXVA from x86.h; include x86.h first.
 
 // ---------------------------------------------------------------
-// Physical addresses (qemu -machine pc)
+// Physical addresses (qemu -machine q35)
 //
 // 00000000 -- low RAM; entryother is copied to 0x7000 to boot APs
 // 000A0000 -- VGA and BIOS ROM; the MP table is near 0xF0000
 // 00100000 -- multiboot loads the kernel here (EXTMEM)
 // end      -- start of kernel page allocation area
 // PHYSTOP  -- end of RAM used by the kernel
+// ...      -- PCI BARs, wherever the firmware put them
 // FEC00000 -- IOAPIC
 // FEE00000 -- LAPIC
 //
@@ -29,10 +30,9 @@
 #define IOAPIC_PA 0xFEC00000
 #define LAPIC_PA  0xFEE00000
 
-// x86_64: I/O ports, not MMIO (riscv: UART0, VIRTIO0).
+// x86_64: an I/O port, not MMIO (riscv: UART0). The virtio disk
+// is a PCI device; pci.c finds its registers.
 #define COM1      0x3F8
-#define IDE_BASE  0x1F0
-#define IDE_CTL   0x3F6 // device control; bit 1 (nIEN) masks IRQ 14
 
 // x86_64: startothers() copies entryother.S here. An AP starts in
 // real mode, so it must be below 1MB and page-aligned (SIPI).
@@ -72,6 +72,7 @@
 // KERNLINK            -- kernel text and data
 // P2V(PHYSTOP)        -- KSTACKBASE
 // KSTACKBASE + 512KB  -- end of kernel stacks
+// DEV2V(BAR)          -- PCI device registers, from ioremap()
 // DEV2V(IOAPIC_PA)    -- IOAPIC
 // DEV2V(LAPIC_PA)     -- LAPIC
 // ---------------------------------------------------------------

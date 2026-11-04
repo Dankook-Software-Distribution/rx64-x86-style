@@ -26,7 +26,8 @@ OBJS = \
   $K/swtch.o \
   $K/syscall.o \
   $K/sysproc.o \
-  $K/ide.o \
+  $K/pci.o \
+  $K/virtio_disk.o \
   $K/sleeplock.o \
   $K/bio.o \
   $K/log.o \
@@ -167,12 +168,13 @@ ifndef CPUS
 CPUS := 3
 endif
 
-# x86_64: pc machine, Multiboot load via -kernel, COM1 on stdio.
+# x86_64: q35 machine, Multiboot load via -kernel, COM1 on stdio.
 # -d int,cpu_reset and -no-reboot keep a triple fault visible;
 # the log goes to qemu.log, since it dumps every interrupt.
-QEMUOPTS = -machine pc -kernel $K/kernel -m 128M -smp $(CPUS) -nographic
-QEMUOPTS += -serial mon:stdio
-QEMUOPTS += -drive file=fs.img,if=ide,index=0,media=disk,format=raw
+QEMUOPTS = -machine q35 -kernel $K/kernel -m 128M -smp $(CPUS) -nographic
+QEMUOPTS += -nic none
+QEMUOPTS += -drive file=fs.img,if=none,format=raw,id=x0
+QEMUOPTS += -device virtio-blk-pci,drive=x0,disable-legacy=on,addr=0x3
 QEMUOPTS += -d int,cpu_reset -D qemu.log -no-reboot -no-shutdown
 
 qemu: check-qemu-version $K/kernel fs.img

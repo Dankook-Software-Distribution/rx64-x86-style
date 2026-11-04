@@ -64,7 +64,7 @@ r_sp()
 }
 
 // write a byte to an I/O port
-// x86_64: COM1 and IDE are in the I/O port space, reached only
+// x86_64: COM1 and PCI config space are I/O ports, reached only
 // with in/out (riscv: the UART was memory-mapped).
 static inline void
 outb(uint16 port, uint8 data)
@@ -78,6 +78,29 @@ inb(uint16 port)
 {
   uint8 x;
   asm volatile("inb %1, %0" : "=a"(x) : "Nd"(port));
+  return x;
+}
+
+// write a 2-byte word to an I/O port
+static inline void
+outw(uint16 port, uint16 data)
+{
+  asm volatile("outw %0, %1" : : "a"(data), "Nd"(port));
+}
+
+// write a 4-byte word to an I/O port
+static inline void
+outl(uint16 port, uint32 data)
+{
+  asm volatile("outl %0, %1" : : "a"(data), "Nd"(port));
+}
+
+// read a 4-byte word from an I/O port
+static inline uint32
+inl(uint16 port)
+{
+  uint32 x;
+  asm volatile("inl %1, %0" : "=a"(x) : "Nd"(port));
   return x;
 }
 

@@ -95,7 +95,7 @@ bread(uint dev, uint blockno)
 
   b = bget(dev, blockno);
   if (!b->valid) {
-    iderw(b, 0); // x86_64: IDE PIO (riscv: virtio_disk_rw)
+    virtio_disk_rw(b, 0);
     b->valid = 1;
   }
   return b;
@@ -108,7 +108,7 @@ bwrite(struct buf *b)
 {
   if (!holdingsleep(&b->lock))
     panic("bwrite");
-  iderw(b, 1); // x86_64: IDE PIO (riscv: virtio_disk_rw)
+  virtio_disk_rw(b, 1);
 }
 
 // Release a locked buffer.

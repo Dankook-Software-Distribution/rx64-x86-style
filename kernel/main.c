@@ -31,7 +31,7 @@ main()
   binit();         // buffer cache
   iinit();         // inode table
   fileinit();      // file table
-  ideinit();       // IDE disk
+  virtio_disk_init(); // emulated hard disk, on PCI
   userinit();      // first user process
   startothers();   // wake the other CPUs
   scheduler();

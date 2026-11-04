@@ -75,8 +75,8 @@ trap(struct trapframe *tf)
   case T_IRQ0 + IRQ_TIMER:
     timerintr();
     break;
-  case T_IRQ0 + IRQ_IDE:
-    ideintr();
+  case T_VIRTIO:
+    virtio_disk_intr();
     lapiceoi();
     break;
   case T_IRQ0 + IRQ_COM1:

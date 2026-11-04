@@ -175,11 +175,23 @@ int             copyin(pagetable_t, uint64, char *, uint64, uint64);
 int             copyinstr(pagetable_t, uint64, char *, uint64, uint64);
 int             ismapped(pagetable_t, uint64);
 uint64          vmfault(pagetable_t, uint64, uint64, int);
+void *          ioremap(uint64, uint64);
 
-// ide.c
-void            ideinit(void);
-void            iderw(struct buf *, int);
-void            ideintr(void);
+// pci.c
+uint32          pci_read_config_dword(uint32, int);
+uint16          pci_read_config_word(uint32, int);
+uint8           pci_read_config_byte(uint32, int);
+void            pci_write_config_word(uint32, int, uint16);
+int             pci_get_device(uint16, uint16);
+void            pci_enable_device(uint32);
+uint64          pci_resource_start(uint32, int);
+int             pci_find_capability(uint32, int);
+void            pci_enable_msix(uint32, int, int);
+
+// virtio_disk.c
+void            virtio_disk_init(void);
+void            virtio_disk_rw(struct buf *, int);
+void            virtio_disk_intr(void);
 
 // early.c
 void            earlyputs(char *);

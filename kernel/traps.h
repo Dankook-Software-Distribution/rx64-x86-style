@@ -34,7 +34,9 @@
 
 #define IRQ_TIMER    0  // LAPIC timer
 #define IRQ_COM1     4  // serial port, through the IOAPIC
-#define IRQ_IDE     14  // primary IDE disk, through the IOAPIC
+
+// x86_64: an MSI-X vector, past the IOAPIC's 24 (riscv: VIRTIO0_IRQ).
+#define T_VIRTIO    56  // virtio disk
 
 // LAPIC spurious-interrupt vector, as Linux's SPURIOUS_APIC_VECTOR.
 #define T_SPURIOUS 0xFF

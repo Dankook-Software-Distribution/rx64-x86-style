@@ -25,7 +25,7 @@ kvmmake(void)
   memset(kpgtbl, 0, PGSIZE);
 
   // x86_64: RAM is at KERNBASE + pa (riscv: identity map). COM1
-  // and IDE are I/O ports, so no UART0/VIRTIO0 mappings.
+  // is an I/O port; the virtio disk's BARs go in later, with ioremap().
 
   // IOAPIC and LAPIC registers, one page each.
   // x86_64: these replace the PLIC. They sit above 2GB physical,
@@ -59,6 +59,24 @@ kvmmap(pagetable_t kpgtbl, uint64 va, uint64 pa, uint64 sz, uint64 perm)
 {
   if (mappages(kpgtbl, va, sz, pa, perm) != 0)
     panic("kvmmap");
+}
+
+// x86_64: map device registers at DEV2V(pa), uncached, and
+// return their address, as Linux's ioremap(). For PCI BARs, which
+// the firmware places at boot. Pages already mapped are kept.
+void *
+ioremap(uint64 pa, uint64 size)
+{
+  if (pa + size > 0x100000000UL)
+    panic("ioremap: above 4GB");
+  for (uint64 a = PGROUNDDOWN(pa); a < pa + size; a += PGSIZE) {
+    pte_t *pte = walk(kernel_pagetable, DEV2V(a), 1);
+    if (pte == 0)
+      panic("ioremap");
+    if ((*pte & PTE_P) == 0)
+      *pte = PA2PTE(a) | PTE_RW | PTE_XD | PTE_PCD | PTE_PWT | PTE_P;
+  }
+  return (void *)DEV2V(pa);
 }
 
 // Initialize the kernel_pagetable, shared by all CPUs.
