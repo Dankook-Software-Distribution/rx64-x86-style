@@ -8,6 +8,9 @@
 // x86_64: control register and EFER bits used by entry.S to turn
 // on paging and long mode (riscv: satp mode field).
 #define CR0_PE   (1L << 0)  // protected mode (entryother.S)
+#define CR0_WP   (1L << 16) // write protect: the kernel obeys read-only PTEs too
+#define CR0_NW   (1L << 29) // not write-through
+#define CR0_CD   (1L << 30) // cache disable; set after INIT
 #define CR0_PG   (1L << 31) // paging
 #define CR4_PAE  (1L << 5)  // physical address extension; required by long mode
 

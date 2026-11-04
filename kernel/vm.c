@@ -35,10 +35,14 @@ kvmmake(void)
   kvmmap(kpgtbl, DEV2V(LAPIC_PA), LAPIC_PA, PGSIZE,
          PTE_RW | PTE_XD | PTE_PCD | PTE_PWT);
 
+  // x86_64: the 1MB below the kernel is data (BIOS tables, the AP
+  // trampoline at ENTRYOTHER), not text (riscv: the kernel starts at KERNBASE).
+  kvmmap(kpgtbl, KERNBASE, 0, EXTMEM, PTE_RW | PTE_XD);
+
   // map kernel text executable and read-only.
   // x86_64: perm 0 (riscv: PTE_R | PTE_X); no R bit, and no XD
   // means executable.
-  kvmmap(kpgtbl, KERNBASE, V2P(KERNBASE), (uint64)etext - KERNBASE, 0);
+  kvmmap(kpgtbl, KERNLINK, V2P(KERNLINK), (uint64)etext - KERNLINK, 0);
 
   // map kernel data and the physical RAM we'll make use of.
   // x86_64: XD keeps data from being executed.

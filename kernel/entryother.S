@@ -46,8 +46,12 @@ start32:
         orl $(EFER_LME | EFER_NXE), %eax
         wrmsr
 
+        # x86_64: WP with PG, as Linux; without it kernel writes
+        # ignore read-only PTEs (riscv has no such bypass).
+        # Clear CD and NW, which INIT sets, to turn caching on.
         movl %cr0, %eax
-        orl $CR0_PG, %eax
+        orl $(CR0_PG | CR0_WP), %eax
+        andl $~(CR0_CD | CR0_NW), %eax
         movl %eax, %cr0
 
         # ljmp $KCSEG, $ABS(start64), spelled out as above.
